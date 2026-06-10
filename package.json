@@ -2,6 +2,9 @@
   "name": "demo-slatewell",
   "version": "0.1.0",
   "private": true,
+  "overrides": {
+    "glob@^10": "^10.5.0"
+  },
   "scripts": {
     "dev": "next dev",
     "build": "next build",
