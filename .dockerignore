@@ -1,0 +1,9 @@
+node_modules
+.next
+.git
+data
+.shots
+.claude
+docs
+*.md
+.session-log
