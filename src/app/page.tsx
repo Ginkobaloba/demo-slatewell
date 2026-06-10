@@ -1,101 +1,54 @@
-import Image from "next/image";
+import Link from "next/link";
+import { SlatewellLogo } from "@/components/slatewell-logo";
 
+/**
+ * Placeholder landing page. The full Slatewell SaaS marketing landing is
+ * chunk 4.14; this exists so the scaffold deploys with the brand visible.
+ */
 export default function Home() {
   return (
-    <div className="grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20 font-[family-name:var(--font-geist-sans)]">
-      <main className="flex flex-col gap-8 row-start-2 items-center sm:items-start">
-        <Image
-          className="dark:invert"
-          src="https://nextjs.org/icons/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol className="list-inside list-decimal text-sm text-center sm:text-left font-[family-name:var(--font-geist-mono)]">
-          <li className="mb-2">
-            Get started by editing{" "}
-            <code className="bg-black/[.05] dark:bg-white/[.06] px-1 py-0.5 rounded font-semibold">
-              src/app/page.tsx
-            </code>
-            .
-          </li>
-          <li>Save and see your changes instantly.</li>
-        </ol>
-
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
-          <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="https://nextjs.org/icons/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
-            />
-            Deploy now
-          </a>
-          <a
-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:min-w-44"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Read our docs
-          </a>
-        </div>
-      </main>
-      <footer className="row-start-3 flex gap-6 flex-wrap items-center justify-center">
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
+    <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col items-center justify-center gap-10 px-6 py-20 text-center">
+      <SlatewellLogo className="text-4xl" />
+      <div className="space-y-4">
+        <h1 className="text-balance text-3xl font-semibold tracking-tight text-foreground sm:text-4xl">
+          Booking that respects your customers and your staff calendar.
+        </h1>
+        <p className="text-pretty text-muted-foreground">
+          Multi-staff scheduling for service businesses, without the
+          enterprise overhead. Full marketing site coming in a later build
+          chunk; the demo flows are below.
+        </p>
+      </div>
+      <div className="grid w-full gap-4 sm:grid-cols-2">
+        <Link
+          href="/book/wave-wellness"
+          className="rounded-xl border border-border bg-card p-6 text-left shadow-sm transition-colors hover:border-slatewell focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring"
         >
-          <Image
-            aria-hidden
-            src="https://nextjs.org/icons/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
-          />
-          Learn
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
+          <div className="text-sm font-medium text-terracotta">
+            Customer flow
+          </div>
+          <div className="mt-1 font-semibold text-foreground">
+            Book at Wave Wellness
+          </div>
+          <p className="mt-2 text-sm text-muted-foreground">
+            The end-customer booking experience for a fictional med-spa.
+          </p>
+        </Link>
+        <Link
+          href="/admin"
+          className="rounded-xl border border-border bg-card p-6 text-left shadow-sm transition-colors hover:border-slatewell focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring"
         >
-          <Image
-            aria-hidden
-            src="https://nextjs.org/icons/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
-          />
-          Examples
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="https://nextjs.org/icons/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
-      </footer>
-    </div>
+          <div className="text-sm font-medium text-terracotta">
+            Business flow
+          </div>
+          <div className="mt-1 font-semibold text-foreground">
+            Admin dashboard
+          </div>
+          <p className="mt-2 text-sm text-muted-foreground">
+            Calendars, services, staff availability, customers, and reports.
+          </p>
+        </Link>
+      </div>
+    </main>
   );
 }

@@ -1,27 +1,147 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
 
+@custom-variant dark (&:is(.dark *));
+
+/*
+ * Slatewell brand tokens.
+ * Slatewell has its OWN identity, distinct from Paradigm:
+ *   primary    deep slate blue  #2e4057
+ *   background warm white       #fafafa
+ *   accent     muted terracotta #c97b5a
+ *   text       dark slate       #1a242f
+ * Paradigm colors (#1f5a44 on #f7f5f0) appear ONLY in the footer banner.
+ */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #fafafa;
+  --foreground: #1a242f;
+  --card: #ffffff;
+  --card-foreground: #1a242f;
+  --popover: #ffffff;
+  --popover-foreground: #1a242f;
+  --primary: #2e4057;
+  --primary-foreground: #fafafa;
+  --secondary: #e7ecf2;
+  --secondary-foreground: #2e4057;
+  --muted: #eef1f4;
+  --muted-foreground: #5b6b7d;
+  --accent: #f5e8e0;
+  --accent-foreground: #7c4630;
+  --destructive: #b3261e;
+  --destructive-foreground: #fafafa;
+  --border: #dde3ea;
+  --input: #dde3ea;
+  --ring: #2e4057;
+  --chart-1: #2e4057;
+  --chart-2: #c97b5a;
+  --chart-3: #7a9e7e;
+  --chart-4: #d9a441;
+  --chart-5: #8e6c88;
+  --radius: 0.5rem;
+  --sidebar: #f3f5f7;
+  --sidebar-foreground: #1a242f;
+  --sidebar-primary: #2e4057;
+  --sidebar-primary-foreground: #fafafa;
+  --sidebar-accent: #e7ecf2;
+  --sidebar-accent-foreground: #2e4057;
+  --sidebar-border: #dde3ea;
+  --sidebar-ring: #2e4057;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+.dark {
+  --background: #14202b;
+  --foreground: #eef1f4;
+  --card: #1a2836;
+  --card-foreground: #eef1f4;
+  --popover: #1a2836;
+  --popover-foreground: #eef1f4;
+  --primary: #9db4cc;
+  --primary-foreground: #14202b;
+  --secondary: #243646;
+  --secondary-foreground: #eef1f4;
+  --muted: #243646;
+  --muted-foreground: #93a4b5;
+  --accent: #3c2a20;
+  --accent-foreground: #e3b29c;
+  --destructive: #e2625a;
+  --destructive-foreground: #14202b;
+  --border: #2c4154;
+  --input: #2c4154;
+  --ring: #9db4cc;
+  --chart-1: #9db4cc;
+  --chart-2: #e3a283;
+  --chart-3: #9fc2a3;
+  --chart-4: #e4bb6a;
+  --chart-5: #b393ad;
+  --sidebar: #1a2836;
+  --sidebar-foreground: #eef1f4;
+  --sidebar-primary: #9db4cc;
+  --sidebar-primary-foreground: #14202b;
+  --sidebar-accent: #243646;
+  --sidebar-accent-foreground: #eef1f4;
+  --sidebar-border: #2c4154;
+  --sidebar-ring: #9db4cc;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+
+  /* Brand-named colors, usable as e.g. bg-slatewell, text-terracotta */
+  --color-slatewell: #2e4057;
+  --color-terracotta: #c97b5a;
+  --color-warmwhite: #fafafa;
+  --color-ink: #1a242f;
+
+  /* Paradigm banner colors. Footer banner ONLY. */
+  --color-paradigm: #1f5a44;
+  --color-paradigm-bg: #f7f5f0;
+
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
   }
-}
-
-body {
-  color: var(--foreground);
-  background: var(--background);
-  font-family: Arial, Helvetica, sans-serif;
-}
-
-@layer utilities {
-  .text-balance {
-    text-wrap: balance;
+  body {
+    @apply bg-background text-foreground;
   }
 }

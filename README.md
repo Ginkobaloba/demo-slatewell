@@ -1,36 +1,57 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Slatewell
 
-## Getting Started
+Booking that respects your customers and your staff calendar.
 
-First, run the development server:
+Slatewell is a fictional booking and scheduling platform for
+small-to-mid-size service businesses (med-spas, salons, consultancies,
+personal trainers, photographers, tutors). It is a portfolio demo built
+by Paradigm: Calendly is for solo operators, Boulevard is
+industry-specific, and the enterprise suites are too heavy. Slatewell
+sits in the middle for businesses that need multi-staff scheduling
+without the overhead.
+
+**Live demo:** https://slatewell.projectnexuscode.org (pending deploy)
+
+## What the demo shows
+
+- A customer-facing booking flow for "Wave Wellness", a fictional
+  med-spa: service, staff, date, time slot, customer info, deposit hold
+  (Stripe Test Mode), confirmation with ICS download, token-protected
+  cancel/reschedule.
+- The business admin product: dashboard, master calendar (day/week/month,
+  color-coded by staff), service CRUD, staff availability editor,
+  customer profiles, a mock SMS/email communications log, and reports.
+
+Nothing real happens: payments run in Stripe Test Mode, SMS/email
+"sends" are rows written to the database and surfaced in the admin
+communications log.
+
+## Stack
+
+- Next.js 14 (App Router) + TypeScript
+- Tailwind CSS v4 + shadcn/ui
+- SQLite via better-sqlite3, seeded with deterministic mock data
+
+## Local development
 
 ```bash
+npm install
+npm run db:seed     # builds data/slatewell.db with the Wave Wellness dataset
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+`npx tsx scripts/verify-seed.ts` runs integrity checks on the seeded
+database (no double-booked staff, schedule fits availability, deposit
+state consistency).
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Brand
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Slatewell has its own identity, separate from Paradigm: deep slate blue
+`#2e4057`, warm white `#fafafa`, muted terracotta `#c97b5a`, dark slate
+text `#1a242f`. The Paradigm attribution banner at the bottom of every
+page is the one element in Paradigm colors.
 
-## Learn More
+## Project docs
 
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- Design decisions: `docs/decisions.md`
+- Session handoffs: `docs/handoffs/`

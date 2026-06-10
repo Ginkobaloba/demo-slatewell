@@ -16,6 +16,12 @@
 # production
 /build
 
+# local database (rebuilt by `npm run db:seed`)
+/data/
+
+# session log (per-device, per session protocol)
+.session-log
+
 # misc
 .DS_Store
 *.pem
