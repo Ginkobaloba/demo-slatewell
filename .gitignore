@@ -19,6 +19,9 @@
 # local database (rebuilt by `npm run db:seed`)
 /data/
 
+# local verification screenshots
+/.shots/
+
 # session log (per-device, per session protocol)
 .session-log
 
