@@ -58,7 +58,10 @@ const badDow = db
 check("no bookings on Sun/Mon (closed)", badDow.n === 0, badDow);
 
 const futureCreated = db
-  .prepare(`SELECT COUNT(*) AS n FROM bookings WHERE created_at > datetime('now', 'localtime')`)
+  // created_at uses a T separator; datetime('now','localtime') emits a
+  // space, and 'T' > ' ' makes every same-day timestamp compare as
+  // future. Format the comparison value the same way as the data.
+  .prepare(`SELECT COUNT(*) AS n FROM bookings WHERE created_at > strftime('%Y-%m-%dT%H:%M', 'now', 'localtime')`)
   .get() as { n: number };
 check("no bookings created in the future", futureCreated.n === 0, futureCreated);
 
