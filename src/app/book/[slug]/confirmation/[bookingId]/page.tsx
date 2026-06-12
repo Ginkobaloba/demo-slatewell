@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import type { Metadata } from "next";
 import { getBookingDetails } from "@/lib/repo";
+import { getInstructions } from "@/lib/instructions";
 import {
   formatDateLong,
   formatDuration,
@@ -14,10 +15,6 @@ export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = { title: "Booking confirmed" };
 
-/**
- * Confirmation page, v0. Chunk 4.5 adds the ICS download,
- * pre-appointment instructions, and the cancel/reschedule link.
- */
 export default function ConfirmationPage({
   params,
 }: {
@@ -27,6 +24,8 @@ export default function ConfirmationPage({
   if (!booking || booking.business_slug !== params.slug) notFound();
 
   const [date, time] = booking.start_at.split("T");
+  const instructions = getInstructions(booking.service_name);
+  const cancelHref = `/book/${params.slug}/cancel/${booking.id}?token=${booking.cancel_token}`;
 
   return (
     <div className="mx-auto w-full max-w-2xl flex-1 px-4 py-8 sm:py-12">
@@ -68,7 +67,10 @@ export default function ConfirmationPage({
           label="Duration"
           value={formatDuration(booking.service_duration_min)}
         />
-        <Row label="Where" value={booking.business_address ?? booking.business_name} />
+        <Row
+          label="Where"
+          value={booking.business_address ?? booking.business_name}
+        />
         <Row label="Price" value={formatMoney(booking.price_cents)} />
         {booking.deposit_cents > 0 && (
           <Row
@@ -79,14 +81,55 @@ export default function ConfirmationPage({
         <Row label="Booking ID" value={booking.id} />
       </dl>
 
-      <p className="mt-4 text-sm text-muted-foreground">
-        Calendar download and pre-appointment instructions arrive in a
-        later build chunk. Need anything else?{" "}
+      <a
+        href={`/book/${params.slug}/confirmation/${booking.id}/ics`}
+        className="mt-4 inline-flex items-center gap-2 rounded-lg bg-slatewell px-5 py-2.5 text-sm font-medium text-warmwhite transition-colors hover:bg-slatewell/90 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring"
+        download
+      >
+        <svg
+          viewBox="0 0 16 16"
+          className="h-4 w-4"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.8"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden="true"
+        >
+          <path d="M8 2v8m0 0L5 7m3 3l3-3M3 13h10" />
+        </svg>
+        Add to calendar (.ics)
+      </a>
+
+      <section className="mt-8">
+        <h2 className="text-lg font-semibold">Before your visit</h2>
+        <ul className="mt-2 space-y-1.5 text-sm text-muted-foreground">
+          {instructions.map((line) => (
+            <li key={line} className="flex gap-2">
+              <span aria-hidden="true" className="text-terracotta">
+                &bull;
+              </span>
+              {line}
+            </li>
+          ))}
+        </ul>
+      </section>
+
+      <p className="mt-8 border-t border-border pt-4 text-sm text-muted-foreground">
+        Plans changed?{" "}
+        <Link
+          href={cancelHref}
+          className="font-medium text-slatewell underline underline-offset-2"
+        >
+          Cancel or reschedule
+        </Link>{" "}
+        at least {booking.business_cancellation_window_hours} hours ahead to
+        release your deposit. Or{" "}
         <Link
           href={`/book/${params.slug}`}
           className="font-medium text-slatewell underline underline-offset-2"
         >
-          Book another appointment
+          book another appointment
         </Link>
         .
       </p>

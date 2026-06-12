@@ -3,8 +3,12 @@
  * and pages call these typed functions. Scheduling math lives in
  * scheduling.ts (pure); this module assembles its inputs from SQLite.
  */
-import { randomBytes } from "crypto";
+import { randomBytes, timingSafeEqual } from "crypto";
 import { getDb } from "@/lib/db";
+import {
+  decideCancellation,
+  type CancellationDecision,
+} from "@/lib/cancellation";
 import {
   computeSlots,
   hhmmToMinutes,
@@ -298,6 +302,7 @@ export interface BookingDetails extends Booking {
   business_name: string;
   business_slug: string;
   business_address: string | null;
+  business_cancellation_window_hours: number;
 }
 
 export function getBookingDetails(
@@ -310,7 +315,8 @@ export function getBookingDetails(
               st.name AS staff_name,
               c.first_name AS customer_first_name, c.last_name AS customer_last_name,
               c.email AS customer_email,
-              b.name AS business_name, b.slug AS business_slug, b.address AS business_address
+              b.name AS business_name, b.slug AS business_slug, b.address AS business_address,
+              b.cancellation_window_hours AS business_cancellation_window_hours
        FROM bookings bk
        JOIN services sv ON sv.id = bk.service_id
        JOIN staff st ON st.id = bk.staff_id
@@ -319,6 +325,137 @@ export function getBookingDetails(
        WHERE bk.id = ?`
     )
     .get(bookingId) as BookingDetails | undefined;
+}
+
+// --- cancellation ---------------------------------------------------------------
+
+export class InvalidCancelTokenError extends Error {
+  constructor() {
+    super("This cancellation link is not valid.");
+  }
+}
+
+export class NotCancellableError extends Error {
+  constructor(public decision: CancellationDecision) {
+    super("This booking can no longer be cancelled.");
+  }
+}
+
+/** Constant-time token comparison (D-007). */
+function tokenMatches(expected: string, provided: string): boolean {
+  const a = Buffer.from(expected, "utf8");
+  const b = Buffer.from(provided, "utf8");
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+
+export function verifyCancelToken(
+  booking: Pick<Booking, "cancel_token">,
+  token: string | null | undefined
+): boolean {
+  return Boolean(token) && tokenMatches(booking.cancel_token, token as string);
+}
+
+/**
+ * Cancel a Confirmed future booking. Requires the cancel_token (D-007).
+ * Deposit follows the business's cancellation window: Released when the
+ * cancellation lands at least `cancellation_window_hours` before start,
+ * Captured (kept by the business) otherwise. Logs mock cancellation
+ * SMS/email rows.
+ */
+export function cancelBooking(opts: {
+  bookingId: string;
+  token: string;
+  reason?: string;
+}): { booking: Booking; decision: CancellationDecision } {
+  const db = getDb();
+  const tx = db.transaction(() => {
+    const booking = db
+      .prepare("SELECT * FROM bookings WHERE id = ?")
+      .get(opts.bookingId) as Booking | undefined;
+    if (!booking || !verifyCancelToken(booking, opts.token)) {
+      throw new InvalidCancelTokenError();
+    }
+    const business = db
+      .prepare("SELECT * FROM businesses WHERE id = ?")
+      .get(booking.business_id) as Business;
+
+    const now = localNowIso();
+    const decision = decideCancellation({
+      startAt: booking.start_at,
+      now,
+      status: booking.status,
+      windowHours: business.cancellation_window_hours,
+      depositStatus: booking.deposit_status,
+    });
+    if (!decision.allowed) throw new NotCancellableError(decision);
+
+    db.prepare(
+      `UPDATE bookings
+       SET status = 'Cancelled', cancelled_at = ?, cancellation_reason = ?,
+           deposit_status = COALESCE(?, deposit_status)
+       WHERE id = ?`
+    ).run(now, opts.reason ?? null, decision.depositOutcome, opts.bookingId);
+
+    logCancellation(booking, business, decision, now);
+    return {
+      booking: db
+        .prepare("SELECT * FROM bookings WHERE id = ?")
+        .get(opts.bookingId) as Booking,
+      decision,
+    };
+  });
+  return tx();
+}
+
+function logCancellation(
+  booking: Booking,
+  business: Business,
+  decision: CancellationDecision,
+  sentAt: string
+) {
+  const db = getDb();
+  const customer = db
+    .prepare("SELECT * FROM customers WHERE id = ?")
+    .get(booking.customer_id) as Customer;
+  const service = db
+    .prepare("SELECT name FROM services WHERE id = ?")
+    .get(booking.service_id) as { name: string };
+
+  const depositLine =
+    decision.depositOutcome === "Released"
+      ? " Your deposit has been released."
+      : decision.depositOutcome === "Captured"
+        ? ` Per our ${business.cancellation_window_hours}-hour policy, your deposit was kept.`
+        : "";
+
+  const insert = db.prepare(
+    `INSERT INTO communications (business_id, booking_id, customer_id, channel, kind, to_address, subject, body, status, sent_at)
+     VALUES (?, ?, ?, ?, 'cancellation', ?, ?, ?, 'sent', ?)`
+  );
+  if (customer.phone) {
+    insert.run(
+      business.id,
+      booking.id,
+      customer.id,
+      "sms",
+      customer.phone,
+      null,
+      `${business.name}: your ${service.name} on ${booking.start_at.slice(0, 10)} is cancelled.${depositLine}`,
+      sentAt
+    );
+  }
+  if (customer.email) {
+    insert.run(
+      business.id,
+      booking.id,
+      customer.id,
+      "email",
+      customer.email,
+      `Your ${business.name} appointment is cancelled`,
+      `Hi ${customer.first_name},\n\nYour ${service.name} appointment on ${booking.start_at.replace("T", " at ")} has been cancelled.${depositLine}\n\nBook again anytime,\n${business.name}`,
+      sentAt
+    );
+  }
 }
 
 // --- local-time helpers (D-003: business-local naive timestamps) -------------

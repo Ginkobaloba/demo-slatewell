@@ -63,3 +63,21 @@ guessable-adjacent; destructive actions need more. The public
 cancel/reschedule route requires the per-booking `cancel_token` (32 hex
 chars) in addition to the ID. Admin routes use the demo-admin cookie
 instead.
+
+## D-008: Pre-appointment instructions live in code (2026-06-12)
+
+Per-service prep instructions (confirmation page + ICS description) are
+a typed map in `src/lib/instructions.ts` keyed by service name, with a
+generic fallback. A real multi-tenant product would put these on the
+`services` table; for the demo, code keeps the schema stable and the
+copy reviewable in one place. Revisit if chunk 4.8 (service CRUD) needs
+editable instructions.
+
+## D-009: Deposit kept = Captured (2026-06-12)
+
+Cancelling inside the free window (more than
+`cancellation_window_hours` before start) releases a Held deposit
+(deposit_status Released). Cancelling later keeps it: the business
+charges the hold, recorded as Captured, matching the seed's No-Show
+semantics. Refunded stays reserved for goodwill reversals issued from
+the admin UI (later chunk).
