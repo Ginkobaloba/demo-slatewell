@@ -81,3 +81,23 @@ Cancelling inside the free window (more than
 charges the hold, recorded as Captured, matching the seed's No-Show
 semantics. Refunded stays reserved for goodwill reversals issued from
 the admin UI (later chunk).
+
+## D-010: Demo-admin auth via httpOnly cookie (2026-06-16)
+
+Admin routes (/admin/*) are guarded by Next.js middleware
+(`src/middleware.ts`) that checks for a `slatewell_admin_session`
+cookie; missing cookie redirects to `/?admin=required`. POST
+`/api/admin/session` sets the cookie (one-click, no credentials); POST
+with `?signout=1` clears it. This is the same pattern as AxlePoint's
+`axle_demo_session`. The cookie is httpOnly + sameSite=lax, 24h MaxAge.
+Admin actions (future chunks) will read the cookie server-side; for this
+demo, the cookie's presence is sufficient authorization -- there is no
+user identity inside it.
+
+The session route returns a path-relative `Location` (303 via a bare
+`NextResponse` with a `Location` header), NOT
+`NextResponse.redirect(new URL("/admin", request.url))`. Behind the demo
+reverse proxy, `request.url`'s origin is the container's internal bind
+address (0.0.0.0:3000), so an absolute Location would send the browser to
+an unreachable host. A relative Location resolves against the real public
+origin. Same fix applied to lumen/axlepoint.
