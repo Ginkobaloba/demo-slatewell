@@ -6,6 +6,12 @@ import {
   InvalidCancelTokenError,
   NotCancellableError,
 } from "@/lib/repo";
+import {
+  captureDeposit,
+  isRealPaymentIntent,
+  releaseDeposit,
+} from "@/lib/deposits";
+import { isStripeConfigured } from "@/lib/stripe";
 
 export const dynamic = "force-dynamic";
 
@@ -33,6 +39,22 @@ export async function POST(
       token: parsed.data.token,
       reason: parsed.data.reason,
     });
+
+    // Settle the real Stripe hold per the policy decision. The DB already
+    // reflects the outcome; a Stripe error here is logged, not surfaced, so a
+    // cancellation is never blocked by the payment processor.
+    if (isStripeConfigured() && isRealPaymentIntent(booking.stripe_payment_intent_id)) {
+      try {
+        if (decision.depositOutcome === "Released") {
+          await releaseDeposit(booking.stripe_payment_intent_id);
+        } else if (decision.depositOutcome === "Captured") {
+          await captureDeposit(booking.stripe_payment_intent_id);
+        }
+      } catch (err) {
+        console.error("Stripe deposit settlement failed", err);
+      }
+    }
+
     return NextResponse.json({
       status: booking.status,
       depositOutcome: decision.depositOutcome,

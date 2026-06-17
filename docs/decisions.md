@@ -101,3 +101,32 @@ reverse proxy, `request.url`'s origin is the container's internal bind
 address (0.0.0.0:3000), so an absolute Location would send the browser to
 an unreachable host. A relative Location resolves against the real public
 origin. Same fix applied to lumen/axlepoint.
+
+## D-011: Stripe deposit holds use manual capture (2026-06-17)
+
+Chunk 4.4 makes the deposit real. Decisions:
+
+- **Manual-capture PaymentIntents are the hold.** A service with
+  deposit_cents > 0 authorizes the amount at booking time with
+  capture_method: "manual" (status requires_capture). The card is
+  authorized, not charged. The cancellation policy (D-009) then releases
+  (cancel the PaymentIntent) inside the free window, or captures (charge)
+  outside it or on a no-show.
+- **Stripe runs in the async route layer, not the sync repo tx.**
+  createBooking and cancelBooking are synchronous better-sqlite3
+  transactions and cannot await Stripe. So the booking route authorizes
+  after the row is inserted (and voids the booking, freeing the slot, on a
+  declined card), and the cancel route settles the hold after the DB
+  records the policy outcome. The DB stays authoritative; a Stripe error is
+  logged, never blocks a cancellation.
+- **Demo card source is a Stripe test token.** There is no PCI card-entry
+  UI, so the hold is placed with pm_card_visa (override via
+  STRIPE_DEMO_PAYMENT_METHOD). The authorize -> hold -> release/capture
+  lifecycle is the real Stripe flow; only the card source is a test token.
+- **No-show capture is an admin action.** POST
+  /api/admin/bookings/[id]/no-show (admin-cookie gated) marks the booking
+  No-Show and captures the held deposit.
+- **Keyless still works.** Stripe is read lazily, so next build needs no
+  key and a keyless environment falls back to a policy-only hold
+  (deposit_status without a real PaymentIntent). Deposit settlement is a
+  no-op without a real PaymentIntent id.
