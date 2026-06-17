@@ -43,21 +43,20 @@ export function ParadigmBanner() {
   return (
     <div
       role="complementary"
-      aria-label="Paradigm demo attribution"
+      aria-label="Paradigm studio CTA"
       className="flex h-8 items-center justify-center gap-2 bg-paradigm-bg px-3 text-xs text-paradigm"
     >
       <ParadigmMark className="h-3.5 w-3.5 shrink-0" />
       <span className="hidden truncate sm:inline">
-        Slatewell is a fictional demo built by{" "}
+        Built by Paradigm Coding Solutions. Want one like it for your data?{" "}
         <a
-          href="https://projectnexuscode.org"
+          href="https://projectnexuscode.org/contact"
           target="_blank"
           rel="noopener noreferrer"
           className="font-semibold underline underline-offset-2 hover:opacity-80"
         >
-          Paradigm
+          Talk to us
         </a>
-        . No real bookings, payments, or messages.
       </span>
       <button
         type="button"
