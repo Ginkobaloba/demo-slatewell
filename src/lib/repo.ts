@@ -236,7 +236,10 @@ export function createBooking(opts: {
       opts.service.price_cents,
       opts.service.deposit_cents,
       hasDeposit ? "Held" : null,
-      hasDeposit ? `pi_mock_${randomBytes(8).toString("hex")}` : null,
+      // The real Stripe PaymentIntent is authorized by the booking route
+      // after this row is inserted (createBooking is a synchronous tx and
+      // cannot await Stripe). Until then the hold is policy-only.
+      null,
       randomBytes(16).toString("hex"),
       opts.notes ?? null,
       createdAt
@@ -478,4 +481,51 @@ export function sameDayNotBefore(date: string): number | undefined {
   if (date !== localTodayIso()) return undefined;
   const d = new Date();
   return d.getHours() * 60 + d.getMinutes() + 60;
+}
+
+// --- deposit holds (4.4: Stripe manual-capture lifecycle) --------------------
+
+/** Attach a real Stripe PaymentIntent id to a booking's deposit hold. */
+export function attachDepositHold(bookingId: string, paymentIntentId: string): void {
+  getDb()
+    .prepare("UPDATE bookings SET stripe_payment_intent_id = ? WHERE id = ?")
+    .run(paymentIntentId, bookingId);
+}
+
+/**
+ * Void a booking whose deposit authorization failed (declined card): mark it
+ * Cancelled so the slot frees, and clear the deposit hold.
+ */
+export function voidBookingForFailedDeposit(bookingId: string): void {
+  getDb()
+    .prepare(
+      `UPDATE bookings
+         SET status = 'Cancelled', deposit_status = NULL,
+             cancelled_at = ?, cancellation_reason = 'Deposit authorization failed'
+       WHERE id = ?`
+    )
+    .run(localNowIso(), bookingId);
+}
+
+/**
+ * Mark a confirmed booking as a no-show and flag its held deposit for capture.
+ * The admin route performs the Stripe capture; this records the local state.
+ * Returns the updated booking, or undefined if it was not Confirmed.
+ */
+export function markNoShow(bookingId: string): Booking | undefined {
+  const db = getDb();
+  const booking = db
+    .prepare("SELECT * FROM bookings WHERE id = ?")
+    .get(bookingId) as Booking | undefined;
+  if (!booking || booking.status !== "Confirmed") return undefined;
+  db.prepare(
+    `UPDATE bookings
+       SET status = 'No-Show',
+           deposit_status = CASE WHEN deposit_status = 'Held'
+             THEN 'Captured' ELSE deposit_status END
+     WHERE id = ?`
+  ).run(bookingId);
+  return db
+    .prepare("SELECT * FROM bookings WHERE id = ?")
+    .get(bookingId) as Booking;
 }

@@ -1,11 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import {
+  attachDepositHold,
   createBooking,
   getBusinessBySlug,
   getService,
   SlotTakenError,
+  voidBookingForFailedDeposit,
 } from "@/lib/repo";
+import { authorizeDeposit } from "@/lib/deposits";
+import { isStripeConfigured } from "@/lib/stripe";
 
 export const dynamic = "force-dynamic";
 
@@ -53,6 +57,28 @@ export async function POST(
       customer: parsed.data.customer,
       notes: parsed.data.notes,
     });
+
+    // Place a real Stripe deposit hold (manual capture) when the service
+    // requires one and Stripe is configured. A declined card voids the
+    // booking and frees the slot.
+    if (service.deposit_cents > 0 && isStripeConfigured()) {
+      const auth = await authorizeDeposit({
+        amountCents: service.deposit_cents,
+        metadata: { booking_id: booking.id, business: business.slug },
+      });
+      if (!auth.ok) {
+        voidBookingForFailedDeposit(booking.id);
+        return NextResponse.json(
+          {
+            error:
+              "We could not authorize your deposit. Please try a different card.",
+          },
+          { status: 402 },
+        );
+      }
+      attachDepositHold(booking.id, auth.paymentIntentId);
+    }
+
     return NextResponse.json({ id: booking.id }, { status: 201 });
   } catch (err) {
     if (err instanceof SlotTakenError) {
