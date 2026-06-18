@@ -14,13 +14,43 @@ const geistMono = localFont({
   weight: "100 900",
 });
 
+const SITE_URL = "https://slatewell.projectnexuscode.org";
+const SITE_DESCRIPTION =
+  "Multi-staff scheduling for service businesses. Real availability, real deposits, and real cancellation policy without enterprise overhead.";
+
 export const metadata: Metadata = {
+  metadataBase: new URL(SITE_URL),
   title: {
     default: "Slatewell",
     template: "%s | Slatewell",
   },
-  description:
-    "Booking that respects your customers and your staff calendar.",
+  description: SITE_DESCRIPTION,
+  robots: { index: false, follow: false },
+  alternates: {
+    canonical: "/",
+  },
+  openGraph: {
+    type: "website",
+    siteName: "Slatewell",
+    title: "Slatewell",
+    description: SITE_DESCRIPTION,
+    url: SITE_URL,
+    locale: "en_US",
+    images: [
+      {
+        url: "/og-default.png",
+        width: 1200,
+        height: 630,
+        alt: "Slatewell, a Paradigm Coding Solutions portfolio demo.",
+      },
+    ],
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "Slatewell",
+    description: SITE_DESCRIPTION,
+    images: ["/og-default.png"],
+  },
 };
 
 export default function RootLayout({
