@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import localFont from "next/font/local";
 import "./globals.css";
 import { ParadigmBanner } from "@/components/paradigm-banner";
+import { PortalHandoffClaim } from "@/components/portal-handoff-claim";
 
 const geistSans = localFont({
   src: "./fonts/GeistVF.woff",
@@ -62,6 +63,7 @@ export default function RootLayout({
     <html lang="en" className={`${geistSans.variable} ${geistMono.variable}`}>
       <body className="flex min-h-screen flex-col font-sans antialiased">
         <div className="flex flex-1 flex-col">{children}</div>
+        <PortalHandoffClaim />
         <ParadigmBanner />
       </body>
     </html>
