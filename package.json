@@ -11,7 +11,9 @@
     "start": "next start",
     "lint": "next lint",
     "db:seed": "tsx scripts/seed.ts",
-    "test:deposits": "tsx scripts/test-deposits.ts"
+    "test:deposits": "tsx scripts/test-deposits.ts",
+    "test:portal-token": "tsx scripts/test-portal-token.ts",
+    "test:portal-handoff": "tsx scripts/test-portal-handoff.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.5.0",
@@ -19,6 +21,7 @@
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "date-fns": "^4.4.0",
+    "jose": "^6.2.3",
     "lucide-react": "^1.17.0",
     "next": "14.2.35",
     "react": "^18",
