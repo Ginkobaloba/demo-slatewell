@@ -1,6 +1,11 @@
 import { NextResponse, type NextRequest } from "next/server";
 
 import { verifyPortalToken } from "@/lib/portal-token";
+import {
+  mintSlatewellSession,
+  slatewellSessionCookieAttributes,
+  SLATEWELL_SESSION_COOKIE,
+} from "@/lib/portal-session";
 
 /**
  * Portal handoff endpoint (chunk 4b).
@@ -23,10 +28,9 @@ import { verifyPortalToken } from "@/lib/portal-token";
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-export const ADMIN_COOKIE = "slatewell_admin_session";
+// Re-export so existing consumers (smoke tests, etc.) keep compiling.
+export const ADMIN_COOKIE = SLATEWELL_SESSION_COOKIE;
 const PORTAL_LANDING = "/admin";
-const SESSION_MAX_AGE = 60 * 60 * 8; // 8 hours; Portal token is 60 min so
-// we issue our own longer-lived session keyed off a fresh launch.
 
 type Body = { token?: unknown };
 
@@ -41,8 +45,8 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const token = typeof body.token === "string" ? body.token.trim() : "";
-  if (!token) {
+  const portalToken = typeof body.token === "string" ? body.token.trim() : "";
+  if (!portalToken) {
     return NextResponse.json(
       { ok: false, reason: "missing_token" },
       { status: 400 },
@@ -51,7 +55,7 @@ export async function POST(request: NextRequest) {
 
   let verified;
   try {
-    verified = await verifyPortalToken(token);
+    verified = await verifyPortalToken(portalToken);
   } catch (err) {
     // Log the detail server-side; surface a generic reason to the client.
     console.error("[portal-handoff] verify failed:", err);
@@ -71,6 +75,12 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  const { token, expiresAt } = await mintSlatewellSession({
+    email: verified.email,
+    customerId: verified.customerId ?? null,
+    role: verified.role,
+  });
+
   const res = NextResponse.json(
     {
       ok: true,
@@ -80,12 +90,9 @@ export async function POST(request: NextRequest) {
     },
     { status: 200 },
   );
-  res.cookies.set(ADMIN_COOKIE, `portal:${verified.email}`, {
-    httpOnly: true,
-    sameSite: "lax",
-    path: "/",
-    maxAge: SESSION_MAX_AGE,
-    secure: process.env.NODE_ENV === "production",
+  res.cookies.set({
+    ...slatewellSessionCookieAttributes(expiresAt),
+    value: token,
   });
   return res;
 }

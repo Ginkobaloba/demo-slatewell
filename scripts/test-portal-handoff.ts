@@ -135,10 +135,15 @@ async function main() {
       check("staff: role=staff", data.role === "staff");
 
       const setCookie = res.headers.get("set-cookie") ?? "";
+      // Cookie value is now a signed HS256 JWT (Harbor pattern), not plain text.
+      // A JWT always starts with "ey" (base64url-encoded header).
+      const cookieValueMatch = setCookie.match(
+        new RegExp(`${ADMIN_COOKIE}=([^;]+)`),
+      );
+      const cookieValue = cookieValueMatch?.[1] ?? "";
       check(
-        "staff: session cookie set",
-        setCookie.includes(`${ADMIN_COOKIE}=portal%3Adrew%40example.com`)
-          || setCookie.includes(`${ADMIN_COOKIE}=portal:drew@example.com`),
+        "staff: session cookie set (JWT)",
+        cookieValue.startsWith("ey") && cookieValue.split(".").length === 3,
         `set-cookie was: ${setCookie}`,
       );
       check(

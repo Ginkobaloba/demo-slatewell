@@ -13,7 +13,8 @@
     "db:seed": "tsx scripts/seed.ts",
     "test:deposits": "tsx scripts/test-deposits.ts",
     "test:portal-token": "tsx scripts/test-portal-token.ts",
-    "test:portal-handoff": "tsx scripts/test-portal-handoff.ts"
+    "test:portal-handoff": "tsx scripts/test-portal-handoff.ts",
+    "test:portal-session": "tsx scripts/test-portal-session.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.5.0",
