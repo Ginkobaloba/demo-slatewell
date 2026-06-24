@@ -23,10 +23,8 @@ import {
   type JWK,
 } from "jose";
 
-import {
-  POST,
-  ADMIN_COOKIE,
-} from "../src/app/api/auth/portal-handoff/route";
+import { POST } from "../src/app/api/auth/portal-handoff/route";
+import { SLATEWELL_SESSION_COOKIE as ADMIN_COOKIE } from "../src/lib/portal-session";
 import { __resetPortalTokenCache } from "../src/lib/portal-token";
 
 const failures: string[] = [];
@@ -111,6 +109,11 @@ function postJson(body: unknown): NextRequest {
 async function main() {
   process.env.PORTAL_EXPECTED_ISSUER = ISSUER;
   process.env.PORTAL_EXPECTED_AUD = AUD;
+  // The route now mints a signed HS256 session cookie, so SESSION_SECRET
+  // must be present or mintSlatewellSession throws at first use. Use a
+  // 48-char throwaway value; the test does not need to round-trip the
+  // signature here (the dedicated session smoke covers verify).
+  process.env.SESSION_SECRET = "a".repeat(48);
 
   const active = await makeKey("ps-test-handoff");
   const jwks = await startJwks([active]);
@@ -135,10 +138,15 @@ async function main() {
       check("staff: role=staff", data.role === "staff");
 
       const setCookie = res.headers.get("set-cookie") ?? "";
+      // Cookie value is now a signed HS256 JWT (Harbor pattern), not plain text.
+      // A JWT always starts with "ey" (base64url-encoded header).
+      const cookieValueMatch = setCookie.match(
+        new RegExp(`${ADMIN_COOKIE}=([^;]+)`),
+      );
+      const cookieValue = cookieValueMatch?.[1] ?? "";
       check(
-        "staff: session cookie set",
-        setCookie.includes(`${ADMIN_COOKIE}=portal%3Adrew%40example.com`)
-          || setCookie.includes(`${ADMIN_COOKIE}=portal:drew@example.com`),
+        "staff: session cookie set (JWT)",
+        cookieValue.startsWith("ey") && cookieValue.split(".").length === 3,
         `set-cookie was: ${setCookie}`,
       );
       check(
