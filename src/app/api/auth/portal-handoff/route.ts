@@ -4,7 +4,6 @@ import { verifyPortalToken } from "@/lib/portal-token";
 import {
   mintSlatewellSession,
   slatewellSessionCookieAttributes,
-  SLATEWELL_SESSION_COOKIE,
 } from "@/lib/portal-session";
 
 /**
@@ -28,8 +27,6 @@ import {
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-// Re-export so existing consumers (smoke tests, etc.) keep compiling.
-export const ADMIN_COOKIE = SLATEWELL_SESSION_COOKIE;
 const PORTAL_LANDING = "/admin";
 
 type Body = { token?: unknown };
