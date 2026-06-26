@@ -1,0 +1,46 @@
+# smoke.yml -- fast surface checks run on every PR
+#
+# Supported assertion types:
+#   http_status       -- checks HTTP response code matches `expect`
+#   text_present      -- checks that `text` appears in the response body
+#   selector_present  -- checks that a CSS selector matches at least one element
+#   header_present    -- checks that the named response header exists
+#   redirects_to      -- checks that the URL redirects to `expect` (final URL)
+#   json_path_equals  -- checks that a JSONPath expression equals `expect`
+
+target: demo-slatewell
+deploy_url: https://slatewell.projectnexuscode.org
+
+surfaces:
+  - name: home
+    url: /
+    assertions:
+      - { type: http_status, expect: 200 }
+      - { type: text_present, text: "Booking that respects your customers" }
+      - { type: text_present, text: "Wave Wellness" }
+      - { type: header_present, header: "Strict-Transport-Security" }
+
+  - name: booking-flow
+    url: /book/wave-wellness
+    assertions:
+      - { type: http_status, expect: 200 }
+      - { type: text_present, text: "Wave Wellness" }
+      - { type: header_present, header: "Strict-Transport-Security" }
+
+  - name: admin-session-post
+    url: /api/admin/session
+    assertions:
+      # POST creates session cookie and redirects to /admin
+      - { type: http_status, expect: 303 }
+
+  - name: admin-unauthenticated
+    url: /admin
+    assertions:
+      # Middleware redirects unauthenticated requests back to home
+      - { type: redirects_to, expect: "https://slatewell.projectnexuscode.org/?admin=required" }
+
+  - name: portal-handoff-endpoint
+    url: /api/auth/portal-handoff
+    assertions:
+      # POST-only endpoint; GET returns 405 Method Not Allowed
+      - { type: http_status, expect: 405 }

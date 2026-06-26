@@ -1,0 +1,57 @@
+# tier_map.yml -- surface risk classification
+#
+# Surfaces listed at tier 3 force a deep-verify pass before a PR touching
+# them can merge. Tier 1 surfaces are low-risk and do not block merges.
+#
+# Tiers:
+#   1 -- informational / low stakes; smoke-only is sufficient
+#   2 -- moderate stakes; smoke required, deep recommended
+#   3 -- high stakes; deep-verify REQUIRED before merge
+
+surfaces:
+  - name: admin-session-post
+    tier: 3
+    deep_verify_before_merge: true
+    reason: >
+      The "standardize-session-cookie" branch changed how slatewell_admin_session
+      is minted (plain string -> HS256 JWT via jose). A regression here locks
+      all admins out of the dashboard or, worse, lets unauthenticated users through
+      the middleware. Cookie name, httpOnly flag, sameSite, and JWT expiry must all
+      be verified end-to-end.
+
+  - name: admin-unauthenticated
+    tier: 3
+    deep_verify_before_merge: true
+    reason: >
+      Middleware enforcement of /admin/:path* is the only thing separating the
+      public landing page from the admin dashboard. If the redirect condition
+      regresses, the dashboard becomes publicly accessible. Must verify the
+      missing-cookie path redirects to /?admin=required and does not 200 or 500.
+
+  - name: portal-handoff-endpoint
+    tier: 3
+    deep_verify_before_merge: true
+    reason: >
+      /api/auth/portal-handoff verifies a Portal RS256 JWT and mints a local
+      session cookie. It is the other entry path into the admin surface. A
+      regression could allow forged tokens, issue oversized session windows, or
+      break the Portal-to-Slatewell SSO flow for any tenant coming through the
+      portal-shell.
+
+  - name: booking-flow
+    tier: 2
+    deep_verify_before_merge: false
+    reason: >
+      Customer-facing booking wizard: data is written to SQLite (bookings table)
+      and Stripe Test Mode is called for deposit holds. Moderate stakes because
+      errors here affect demo fidelity, but nothing real is charged and the
+      database resets on redeploy. Deep verify recommended before shipping UI
+      changes; not a hard gate.
+
+  - name: home
+    tier: 1
+    deep_verify_before_merge: false
+    reason: >
+      Static marketing landing page. Server-rendered with no auth checks and no
+      data writes. Regressions are visible immediately and carry no financial or
+      access-control consequence.
