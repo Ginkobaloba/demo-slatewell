@@ -38,25 +38,27 @@ export default function AdminLayout({ children }: { children: ReactNode }) {
           </Link>
         </div>
         <nav className="flex-1 space-y-0.5 px-2 py-3">
-          {NAV.map(({ href, label, icon: Icon, active }) => (
-            <Link
-              key={href}
-              href={href}
-              className={`flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
-                active
-                  ? "bg-sidebar-accent text-sidebar-primary"
-                  : "text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground"
-              }`}
-            >
-              <Icon className="h-4 w-4 shrink-0" />
-              {label}
-              {!active && (
-                <span className="ml-auto text-[10px] text-muted-foreground/50">
-                  soon
-                </span>
-              )}
-            </Link>
-          ))}
+          {NAV.map(({ href, label, icon: Icon, active }) =>
+            active ? (
+              <Link
+                key={href}
+                href={href}
+                className="flex items-center gap-2.5 rounded-lg bg-sidebar-accent px-3 py-2 text-sm font-medium text-sidebar-primary transition-colors"
+              >
+                <Icon className="h-4 w-4 shrink-0" />
+                {label}
+              </Link>
+            ) : (
+              <span
+                key={label}
+                className="flex cursor-default items-center gap-2.5 rounded-lg px-3 py-2 text-sm font-medium text-muted-foreground/50"
+              >
+                <Icon className="h-4 w-4 shrink-0" />
+                {label}
+                <span className="ml-auto text-[10px]">soon</span>
+              </span>
+            )
+          )}
         </nav>
         <div className="border-t border-border px-2 py-3">
           <form method="POST" action="/api/admin/session?signout=1">
