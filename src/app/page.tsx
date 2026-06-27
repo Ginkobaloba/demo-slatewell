@@ -328,7 +328,7 @@ export default function Home({
           <p>
             Slatewell is a fictional product demo.{" "}
             <a
-              href="https://projectnexuscode.org"
+              href="https://paradigm.codes"
               className="font-medium text-slatewell hover:underline"
             >
               Built by Paradigm Coding Solutions
