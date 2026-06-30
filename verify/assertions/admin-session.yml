@@ -1,0 +1,84 @@
+# assertions/admin-session.yml -- deep verify for the admin session + auth surfaces
+#
+# Covers three related surfaces tested together because they form one
+# auth lifecycle: unauthenticated redirect -> session mint -> admin access.
+#
+# These assertions are Tier-3 and run during /verify deep only. The
+# "standardize-session-cookie" branch changed the cookie from a plain string
+# to an HS256 JWT (jose), making this surface high-stakes.
+#
+# Assertion types used here:
+#   http_status       -- HTTP response code equals `expect`
+#   text_present      -- `text` appears in response body
+#   selector_present  -- CSS selector matches >= 1 element in rendered DOM
+#   header_present    -- named response header exists
+#   redirects_to      -- final URL after redirects equals `expect`
+#   no_console_errors -- zero JS console errors in headless browser run
+#   axe_no_critical   -- axe-core accessibility scan returns zero critical issues
+
+# --- 1. Unauthenticated /admin redirects to home with ?admin=required ---
+
+surface: admin-unauthenticated
+url: /admin
+assertions:
+  - { type: redirects_to, expect: "https://slatewell.projectnexuscode.org/?admin=required" }
+  # After redirect, the page must render the "sign in required" inline notice
+  - { type: text_present, text: "Sign in as demo admin to access the dashboard." }
+  - { type: http_status, expect: 200 }  # final page after redirect is 200
+  - { type: no_console_errors }
+
+---
+
+# --- 2. POST /api/admin/session sets cookie and redirects to /admin ---
+
+surface: admin-session-post
+url: /api/admin/session
+assertions:
+  # Initial POST returns 303 with Location: /admin
+  - { type: http_status, expect: 303 }
+  # The Set-Cookie header must be present (slatewell_admin_session)
+  - { type: header_present, header: "set-cookie" }
+
+---
+
+# --- 3. Authenticated /admin loads the dashboard (browser flow) ---
+#
+# This assertion block runs in headless browser mode after /api/admin/session
+# has been POSTed so the session cookie is in the jar. The verify runner must
+# execute the POST first, then follow to /admin.
+
+surface: admin-dashboard-authenticated
+url: /admin
+# Note to verify runner: pre-condition is a valid slatewell_admin_session cookie.
+# In the headless layer, POST /api/admin/session first to acquire the cookie,
+# then navigate to /admin.
+assertions:
+  - { type: http_status, expect: 200 }
+  # Dashboard heading
+  - { type: text_present, text: "Dashboard" }
+  # KPI stat card labels (rendered by StatCard components)
+  - { type: text_present, text: "Revenue (completed)" }
+  - { type: text_present, text: "Deposits held" }
+  - { type: text_present, text: "Cancellation rate" }
+  # Today's schedule section heading
+  - { type: text_present, text: "Today" }
+  # Week ahead section heading
+  - { type: text_present, text: "Week ahead" }
+  # Business name rendered in the subheading
+  - { type: text_present, text: "Wave Wellness" }
+  # KPI cards are rendered as article or section elements with stat values
+  - { type: selector_present, selector: "h1" }
+  - { type: no_console_errors }
+  - { type: axe_no_critical }
+
+---
+
+# --- 4. Sign-out clears the cookie and redirects to / ---
+
+surface: admin-signout
+url: /api/admin/session?signout=1
+assertions:
+  # Sign-out POST returns 303 to /
+  - { type: http_status, expect: 303 }
+  # After sign-out, /admin must redirect back to home (cookie cleared)
+  # -- verify runner should navigate to /admin after sign-out to confirm

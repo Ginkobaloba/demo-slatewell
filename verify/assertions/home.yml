@@ -1,0 +1,45 @@
+# assertions/home.yml -- full assertion set for the home surface
+#
+# This file runs during deep verify (/verify deep). It is richer than the
+# smoke.yml entry for the same surface. Add assertions here that are too
+# slow or too browser-dependent to run on every PR.
+#
+# Assertion types:
+#   http_status       -- HTTP response code equals `expect`
+#   text_present      -- `text` appears in response body
+#   selector_present  -- CSS selector matches >= 1 element in rendered DOM
+#   header_present    -- named response header exists
+#   redirects_to      -- final URL after redirects equals `expect`
+#   json_path_equals  -- JSONPath expression over response body equals `expect`
+#   no_console_errors -- zero console errors in a headless browser run
+#   lcp_under_ms      -- Largest Contentful Paint is below `expect` milliseconds
+#   axe_no_critical   -- axe-core accessibility scan returns zero critical issues
+#
+# Replace all <PLACEHOLDER> values before use.
+
+surface: home
+url: /
+assertions:
+  - { type: http_status, expect: 200 }
+  # Hero headline
+  - { type: text_present, text: "Booking that respects your customers" }
+  # Stats strip copy (confirms the stats section rendered)
+  - { type: text_present, text: "fewer no-shows with deposits on file" }
+  # Demo business name appears in the live-availability preview card
+  - { type: text_present, text: "Wave Wellness, Tuesday" }
+  # "Sign in as demo admin" button present (two instances: header + CTA section)
+  - { type: selector_present, selector: "button[type='submit']" }
+  # Paradigm attribution banner present at page bottom
+  - { type: selector_present, selector: "footer" }
+  # Platform anchor section exists (linked from nav)
+  - { type: selector_present, selector: "#platform" }
+  # Capabilities anchor section exists
+  - { type: selector_present, selector: "#capabilities" }
+  # Security headers
+  - { type: header_present, header: "Strict-Transport-Security" }
+  # Performance: SSR landing page should paint fast
+  - { type: lcp_under_ms, expect: 2500 }
+  # No JS console errors on server-rendered page
+  - { type: no_console_errors }
+  # Accessibility baseline
+  - { type: axe_no_critical }
