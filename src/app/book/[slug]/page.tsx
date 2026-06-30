@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import { notFound } from "next/navigation";
 import type { Metadata } from "next";
 import { getDb } from "@/lib/db";
@@ -58,13 +59,15 @@ export default function BookPage({ params }: { params: { slug: string } }) {
           </p>
         )}
       </header>
-      <BookingWizard
-        slug={business.slug}
-        services={services}
-        staffByService={staffByService}
-        weekdaysByStaff={weekdaysByStaff}
-        stripeEnabled={Boolean(process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY)}
-      />
+      <Suspense>
+        <BookingWizard
+          slug={business.slug}
+          services={services}
+          staffByService={staffByService}
+          weekdaysByStaff={weekdaysByStaff}
+          stripeEnabled={Boolean(process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY)}
+        />
+      </Suspense>
     </div>
   );
 }

@@ -6,7 +6,7 @@
  * /api/book/[slug]/availability as the customer picks a date.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { cn } from "@/lib/utils";
 import {
   formatDateLong,
@@ -21,6 +21,23 @@ import { DepositPaymentStep } from "@/components/booking/deposit-payment-step";
 const BASE_STEPS = ["Service", "Staff", "Time", "Details", "Review"] as const;
 const PAYMENT_STEP = "Payment";
 type StepIndex = 0 | 1 | 2 | 3 | 4 | 5;
+
+// URL slugs for each step, so a booking is addressable (?step=time) and the
+// browser back/forward buttons move between steps instead of leaving the page.
+// "payment" is the deposit step (index 5), only reachable when a deposit is due.
+const STEP_SLUGS = [
+  "service",
+  "staff",
+  "time",
+  "details",
+  "review",
+  "payment",
+] as const;
+
+function stepIndexFromSlug(slug: string | null): StepIndex {
+  const i = STEP_SLUGS.indexOf((slug ?? "") as (typeof STEP_SLUGS)[number]);
+  return (i >= 0 ? i : 0) as StepIndex;
+}
 
 interface SlotOption {
   time: string;
@@ -49,7 +66,8 @@ export function BookingWizard({
   stripeEnabled: boolean;
 }) {
   const router = useRouter();
-  const [step, setStep] = useState<StepIndex>(0);
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
   const [service, setService] = useState<Service | null>(null);
   const [staffChoice, setStaffChoice] = useState<number | "any" | null>(null);
   const [date, setDate] = useState<string | null>(null);
@@ -64,21 +82,64 @@ export function BookingWizard({
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const headingRef = useRef<HTMLHeadingElement>(null);
-
-  const goTo = useCallback((next: StepIndex) => {
-    setStep(next);
-    setError(null);
-    // Move focus to the step heading for keyboard/screen-reader users.
-    requestAnimationFrame(() => headingRef.current?.focus());
-  }, []);
-
-  const capableStaff = service ? staffByService[service.id] ?? [] : [];
+  const firstRender = useRef(true);
 
   // A deposit step is shown only when the chosen service holds a deposit
   // and Stripe is live. Keyless or zero-deposit services confirm directly.
   const needsDeposit = Boolean(
     service && service.deposit_cents > 0 && stripeEnabled,
   );
+
+  // The furthest step the current selections can support. A deep link or a
+  // refresh that asks for more than this is clamped back, since the earlier
+  // choices cannot be reconstructed from the URL alone. When a deposit is due
+  // the flow extends one step past Review to the payment step (index 5).
+  const maxStep: StepIndex = !service
+    ? 0
+    : staffChoice === null
+      ? 1
+      : !(slot && date)
+        ? 2
+        : !(form.firstName && form.lastName && form.email && form.phone)
+          ? 3
+          : needsDeposit
+            ? 5
+            : 4;
+  const requestedStep = stepIndexFromSlug(searchParams.get("step"));
+  const step: StepIndex = Math.min(requestedStep, maxStep) as StepIndex;
+
+  const goTo = useCallback(
+    (next: StepIndex) => {
+      setError(null);
+      const params = new URLSearchParams(searchParams.toString());
+      params.set("step", STEP_SLUGS[next]);
+      router.push(`${pathname}?${params.toString()}`, { scroll: false });
+    },
+    [pathname, router, searchParams],
+  );
+
+  // Move focus to the step heading on step change for keyboard and
+  // screen-reader users (but not on the initial mount).
+  useEffect(() => {
+    if (firstRender.current) {
+      firstRender.current = false;
+      return;
+    }
+    requestAnimationFrame(() => headingRef.current?.focus());
+  }, [step]);
+
+  // If the URL asks for a step the state cannot support (deep link, refresh,
+  // or a stale forward entry), correct the URL to the clamped step.
+  useEffect(() => {
+    if (requestedStep !== step) {
+      const params = new URLSearchParams(searchParams.toString());
+      params.set("step", STEP_SLUGS[step]);
+      router.replace(`${pathname}?${params.toString()}`, { scroll: false });
+    }
+  }, [requestedStep, step, pathname, router, searchParams]);
+
+  const capableStaff = service ? staffByService[service.id] ?? [] : [];
+
   const steps = needsDeposit
     ? [...BASE_STEPS, PAYMENT_STEP]
     : [...BASE_STEPS];
