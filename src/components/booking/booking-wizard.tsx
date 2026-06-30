@@ -24,7 +24,15 @@ type StepIndex = 0 | 1 | 2 | 3 | 4 | 5;
 
 // URL slugs for each step, so a booking is addressable (?step=time) and the
 // browser back/forward buttons move between steps instead of leaving the page.
-const STEP_SLUGS = ["service", "staff", "time", "details", "review"] as const;
+// "payment" is the deposit step (index 5), only reachable when a deposit is due.
+const STEP_SLUGS = [
+  "service",
+  "staff",
+  "time",
+  "details",
+  "review",
+  "payment",
+] as const;
 
 function stepIndexFromSlug(slug: string | null): StepIndex {
   const i = STEP_SLUGS.indexOf((slug ?? "") as (typeof STEP_SLUGS)[number]);
@@ -76,9 +84,16 @@ export function BookingWizard({
   const headingRef = useRef<HTMLHeadingElement>(null);
   const firstRender = useRef(true);
 
+  // A deposit step is shown only when the chosen service holds a deposit
+  // and Stripe is live. Keyless or zero-deposit services confirm directly.
+  const needsDeposit = Boolean(
+    service && service.deposit_cents > 0 && stripeEnabled,
+  );
+
   // The furthest step the current selections can support. A deep link or a
   // refresh that asks for more than this is clamped back, since the earlier
-  // choices cannot be reconstructed from the URL alone.
+  // choices cannot be reconstructed from the URL alone. When a deposit is due
+  // the flow extends one step past Review to the payment step (index 5).
   const maxStep: StepIndex = !service
     ? 0
     : staffChoice === null
@@ -87,7 +102,9 @@ export function BookingWizard({
         ? 2
         : !(form.firstName && form.lastName && form.email && form.phone)
           ? 3
-          : 4;
+          : needsDeposit
+            ? 5
+            : 4;
   const requestedStep = stepIndexFromSlug(searchParams.get("step"));
   const step: StepIndex = Math.min(requestedStep, maxStep) as StepIndex;
 
@@ -123,11 +140,6 @@ export function BookingWizard({
 
   const capableStaff = service ? staffByService[service.id] ?? [] : [];
 
-  // A deposit step is shown only when the chosen service holds a deposit
-  // and Stripe is live. Keyless or zero-deposit services confirm directly.
-  const needsDeposit = Boolean(
-    service && service.deposit_cents > 0 && stripeEnabled,
-  );
   const steps = needsDeposit
     ? [...BASE_STEPS, PAYMENT_STEP]
     : [...BASE_STEPS];
