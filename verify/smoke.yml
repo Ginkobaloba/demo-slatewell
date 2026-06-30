@@ -30,8 +30,9 @@ surfaces:
   - name: admin-session-post
     url: /api/admin/session
     assertions:
-      # POST creates session cookie and redirects to /admin
-      - { type: http_status, expect: 303 }
+      # GET-only smoke harness; this POST-only route returns 405 to a GET.
+      # The 303 POST->/admin redirect is exercised in deep verify (browser layer).
+      - { type: http_status, expect: 405 }
 
   - name: admin-unauthenticated
     url: /admin
