@@ -63,6 +63,7 @@ export default function BookPage({ params }: { params: { slug: string } }) {
         services={services}
         staffByService={staffByService}
         weekdaysByStaff={weekdaysByStaff}
+        stripeEnabled={Boolean(process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY)}
       />
     </div>
   );

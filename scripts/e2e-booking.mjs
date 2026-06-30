@@ -27,7 +27,10 @@ await page.goto(`${BASE_URL}/book/wave-wellness`);
 await page.screenshot({ path: path.join(SHOTS, "book-1-services.png") });
 check("services step renders", await page.getByText("Choose a service").isVisible());
 
-await page.getByRole("button", { name: /Signature Facial/ }).click();
+// Skin Consultation has no deposit, so this exercises the direct
+// confirm path and the calendar-of-record claim without card entry.
+// The deposit + card-entry path is covered by e2e-deposit-ui.mjs.
+await page.getByRole("button", { name: /Skin Consultation/ }).click();
 await page.screenshot({ path: path.join(SHOTS, "book-2-staff.png") });
 check("staff step renders", await page.getByText("Choose your practitioner").isVisible());
 

@@ -21,6 +21,78 @@ export type DepositAuthorization =
   | { ok: true; paymentIntentId: string }
   | { ok: false; reason: string };
 
+/**
+ * Create an UNCONFIRMED manual-capture deposit intent for the Stripe
+ * Elements card-entry flow. The customer confirms it in the browser with
+ * the card they enter, which authorizes (holds) the amount without
+ * charging it (status -> requires_capture). The returned client_secret is
+ * handed to <PaymentElement>; the PaymentIntent id is verified server-side
+ * before a booking is written against it.
+ */
+export async function createDepositIntent(opts: {
+  amountCents: number;
+  metadata?: Record<string, string>;
+}): Promise<
+  | { ok: true; clientSecret: string; paymentIntentId: string }
+  | { ok: false; reason: string }
+> {
+  try {
+    const intent = await getStripe().paymentIntents.create({
+      amount: opts.amountCents,
+      currency: "usd",
+      capture_method: "manual",
+      // A deposit hold is a card authorization (auth now, capture/release
+      // later), so the customer enters a card -- not a bank/redirect method.
+      payment_method_types: ["card"],
+      metadata: opts.metadata ?? {},
+    });
+    if (!intent.client_secret) {
+      return { ok: false, reason: "no client secret" };
+    }
+    return {
+      ok: true,
+      clientSecret: intent.client_secret,
+      paymentIntentId: intent.id,
+    };
+  } catch (err) {
+    const e = err as { code?: string; message?: string };
+    return { ok: false, reason: e.code ?? e.message ?? "intent_error" };
+  }
+}
+
+/**
+ * Verify a customer-confirmed deposit intent before a booking is written
+ * against it: it must be authorized-but-not-captured (requires_capture),
+ * priced exactly at the deposit, in USD, and tagged for this business. Any
+ * mismatch is treated as a tampering/replay attempt and rejected.
+ */
+export async function verifyDepositIntent(opts: {
+  paymentIntentId: string;
+  expectedAmountCents: number;
+  expectedBusinessSlug: string;
+}): Promise<{ ok: true } | { ok: false; reason: string }> {
+  let intent;
+  try {
+    intent = await getStripe().paymentIntents.retrieve(opts.paymentIntentId);
+  } catch (err) {
+    const e = err as { code?: string; message?: string };
+    return { ok: false, reason: e.code ?? e.message ?? "retrieve_error" };
+  }
+  if (intent.status !== "requires_capture") {
+    return { ok: false, reason: `status ${intent.status}` };
+  }
+  if (intent.amount !== opts.expectedAmountCents) {
+    return { ok: false, reason: "amount mismatch" };
+  }
+  if (intent.currency !== "usd") {
+    return { ok: false, reason: "currency mismatch" };
+  }
+  if (intent.metadata?.business !== opts.expectedBusinessSlug) {
+    return { ok: false, reason: "business mismatch" };
+  }
+  return { ok: true };
+}
+
 /** Authorize (hold) a deposit. Returns the PaymentIntent id on success. */
 export async function authorizeDeposit(opts: {
   amountCents: number;
