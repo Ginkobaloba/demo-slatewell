@@ -188,8 +188,10 @@ export class SlotTakenError extends Error {
  * transaction (better-sqlite3 is synchronous, so this is race-safe
  * within the single Node process).
  *
- * Deposit: until chunk 4.4 wires Stripe Test Mode, services with a
- * deposit record a mock Held intent so downstream UI is exercised.
+ * Deposit: when the service requires one, the booking is Held. A real
+ * Stripe PaymentIntent (already authorized by the customer via Elements,
+ * verified by the booking route) is attached when `paymentIntentId` is
+ * given; otherwise the hold is policy-only (keyless demo fallback).
  */
 export function createBooking(opts: {
   business: Business;
@@ -199,6 +201,7 @@ export function createBooking(opts: {
   time: string; // HH:mm
   customer: { firstName: string; lastName: string; email: string; phone: string };
   notes?: string;
+  paymentIntentId?: string | null;
 }): Booking {
   const db = getDb();
   const tx = db.transaction((): Booking => {
@@ -236,10 +239,10 @@ export function createBooking(opts: {
       opts.service.price_cents,
       opts.service.deposit_cents,
       hasDeposit ? "Held" : null,
-      // The real Stripe PaymentIntent is authorized by the booking route
-      // after this row is inserted (createBooking is a synchronous tx and
-      // cannot await Stripe). Until then the hold is policy-only.
-      null,
+      // The customer-confirmed Stripe PaymentIntent (requires_capture),
+      // verified by the booking route before this insert. Null = policy-only
+      // hold (keyless demo) or no deposit.
+      hasDeposit ? opts.paymentIntentId ?? null : null,
       randomBytes(16).toString("hex"),
       opts.notes ?? null,
       createdAt
@@ -484,6 +487,16 @@ export function sameDayNotBefore(date: string): number | undefined {
 }
 
 // --- deposit holds (4.4: Stripe manual-capture lifecycle) --------------------
+
+/** True if some booking already holds this PaymentIntent (replay guard). */
+export function paymentIntentAlreadyUsed(paymentIntentId: string): boolean {
+  const row = getDb()
+    .prepare(
+      "SELECT 1 FROM bookings WHERE stripe_payment_intent_id = ? LIMIT 1",
+    )
+    .get(paymentIntentId);
+  return Boolean(row);
+}
 
 /** Attach a real Stripe PaymentIntent id to a booking's deposit hold. */
 export function attachDepositHold(bookingId: string, paymentIntentId: string): void {

@@ -16,9 +16,11 @@ import {
   formatTime,
 } from "@/lib/format";
 import type { Service, Staff } from "@/lib/types";
+import { DepositPaymentStep } from "@/components/booking/deposit-payment-step";
 
-const STEPS = ["Service", "Staff", "Time", "Details", "Review"] as const;
-type StepIndex = 0 | 1 | 2 | 3 | 4;
+const BASE_STEPS = ["Service", "Staff", "Time", "Details", "Review"] as const;
+const PAYMENT_STEP = "Payment";
+type StepIndex = 0 | 1 | 2 | 3 | 4 | 5;
 
 interface SlotOption {
   time: string;
@@ -38,11 +40,13 @@ export function BookingWizard({
   services,
   staffByService,
   weekdaysByStaff,
+  stripeEnabled,
 }: {
   slug: string;
   services: Service[];
   staffByService: Record<number, Staff[]>;
   weekdaysByStaff: Record<number, number[]>;
+  stripeEnabled: boolean;
 }) {
   const router = useRouter();
   const [step, setStep] = useState<StepIndex>(0);
@@ -69,6 +73,32 @@ export function BookingWizard({
   }, []);
 
   const capableStaff = service ? staffByService[service.id] ?? [] : [];
+
+  // A deposit step is shown only when the chosen service holds a deposit
+  // and Stripe is live. Keyless or zero-deposit services confirm directly.
+  const needsDeposit = Boolean(
+    service && service.deposit_cents > 0 && stripeEnabled,
+  );
+  const steps = needsDeposit
+    ? [...BASE_STEPS, PAYMENT_STEP]
+    : [...BASE_STEPS];
+
+  function bookingPayload() {
+    if (!service || !slot || !date) return null;
+    return {
+      serviceId: service.id,
+      staffId: slot.staffId,
+      date,
+      time: slot.time,
+      customer: {
+        firstName: form.firstName,
+        lastName: form.lastName,
+        email: form.email,
+        phone: form.phone,
+      },
+      notes: form.notes || undefined,
+    };
+  }
 
   // Weekdays with any availability for the current staff selection.
   const enabledWeekdays = useMemo(() => {
@@ -126,7 +156,7 @@ export function BookingWizard({
 
   return (
     <div>
-      <StepIndicator current={step} />
+      <StepIndicator steps={steps} current={step} />
       {error && (
         <p
           role="alert"
@@ -374,10 +404,46 @@ export function BookingWizard({
           <PrimaryButton
             className="mt-4"
             disabled={submitting}
-            onClick={submit}
+            onClick={() => {
+              if (needsDeposit) goTo(5);
+              else submit();
+            }}
           >
-            {submitting ? "Confirming..." : "Confirm booking"}
+            {needsDeposit
+              ? `Continue to deposit (${formatMoney(service.deposit_cents)})`
+              : submitting
+                ? "Confirming..."
+                : "Confirm booking"}
           </PrimaryButton>
+        </StepShell>
+      )}
+
+      {step === 5 && service && slot && date && needsDeposit && (
+        <StepShell
+          headingRef={headingRef}
+          title="Secure your booking with a deposit"
+          onBack={() => goTo(4)}
+        >
+          {(() => {
+            const payload = bookingPayload();
+            if (!payload) return null;
+            return (
+              <DepositPaymentStep
+                slug={slug}
+                depositCents={service.deposit_cents}
+                payload={payload}
+                onBack={() => goTo(4)}
+                onSlotTaken={(message) => {
+                  setSlot(null);
+                  goTo(2);
+                  setError(message);
+                }}
+                onConfirmed={(id) => {
+                  router.push(`/book/${slug}/confirmation/${id}`);
+                }}
+              />
+            );
+          })()}
         </StepShell>
       )}
     </div>
@@ -386,10 +452,16 @@ export function BookingWizard({
 
 // ---------------------------------------------------------------------------
 
-function StepIndicator({ current }: { current: number }) {
+function StepIndicator({
+  steps,
+  current,
+}: {
+  steps: string[];
+  current: number;
+}) {
   return (
     <ol aria-label="Booking steps" className="mb-6 flex items-center gap-1.5">
-      {STEPS.map((label, i) => (
+      {steps.map((label, i) => (
         <li key={label} className="flex items-center gap-1.5">
           <span
             aria-current={i === current ? "step" : undefined}
@@ -404,7 +476,7 @@ function StepIndicator({ current }: { current: number }) {
           >
             {label}
           </span>
-          {i < STEPS.length - 1 && (
+          {i < steps.length - 1 && (
             <span aria-hidden="true" className="text-border">
               /
             </span>

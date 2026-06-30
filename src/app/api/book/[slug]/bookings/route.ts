@@ -1,14 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import {
-  attachDepositHold,
   createBooking,
   getBusinessBySlug,
   getService,
+  paymentIntentAlreadyUsed,
   SlotTakenError,
-  voidBookingForFailedDeposit,
 } from "@/lib/repo";
-import { authorizeDeposit } from "@/lib/deposits";
+import { releaseDeposit, verifyDepositIntent } from "@/lib/deposits";
 import { isStripeConfigured } from "@/lib/stripe";
 
 export const dynamic = "force-dynamic";
@@ -25,6 +24,9 @@ const bodySchema = z.object({
     phone: z.string().trim().min(7).max(25),
   }),
   notes: z.string().trim().max(500).optional(),
+  // Present for deposit-bearing services: the customer-confirmed Stripe
+  // PaymentIntent (manual capture, already authorized via Elements).
+  paymentIntentId: z.string().trim().min(1).max(255).optional(),
 });
 
 export async function POST(
@@ -47,6 +49,44 @@ export async function POST(
     return NextResponse.json({ error: "Unknown service" }, { status: 404 });
   }
 
+  // For a deposit-bearing service with Stripe live, the card hold must
+  // already be authorized (Elements) and verified before we write a row.
+  // The slot is then re-validated race-safely inside createBooking; if it
+  // was taken in the interim, we release the hold so the card is freed.
+  const stripeLive = service.deposit_cents > 0 && isStripeConfigured();
+  let verifiedPaymentIntentId: string | null = null;
+
+  if (stripeLive) {
+    const piId = parsed.data.paymentIntentId;
+    if (!piId) {
+      return NextResponse.json(
+        { error: "A deposit is required for this service." },
+        { status: 402 },
+      );
+    }
+    if (paymentIntentAlreadyUsed(piId)) {
+      return NextResponse.json(
+        { error: "This deposit has already been used." },
+        { status: 409 },
+      );
+    }
+    const verdict = await verifyDepositIntent({
+      paymentIntentId: piId,
+      expectedAmountCents: service.deposit_cents,
+      expectedBusinessSlug: business.slug,
+    });
+    if (!verdict.ok) {
+      return NextResponse.json(
+        {
+          error:
+            "We could not verify your deposit hold. Please try booking again.",
+        },
+        { status: 402 },
+      );
+    }
+    verifiedPaymentIntentId = piId;
+  }
+
   try {
     const booking = createBooking({
       business,
@@ -56,32 +96,19 @@ export async function POST(
       time: parsed.data.time,
       customer: parsed.data.customer,
       notes: parsed.data.notes,
+      paymentIntentId: verifiedPaymentIntentId,
     });
-
-    // Place a real Stripe deposit hold (manual capture) when the service
-    // requires one and Stripe is configured. A declined card voids the
-    // booking and frees the slot.
-    if (service.deposit_cents > 0 && isStripeConfigured()) {
-      const auth = await authorizeDeposit({
-        amountCents: service.deposit_cents,
-        metadata: { booking_id: booking.id, business: business.slug },
-      });
-      if (!auth.ok) {
-        voidBookingForFailedDeposit(booking.id);
-        return NextResponse.json(
-          {
-            error:
-              "We could not authorize your deposit. Please try a different card.",
-          },
-          { status: 402 },
-        );
-      }
-      attachDepositHold(booking.id, auth.paymentIntentId);
-    }
-
     return NextResponse.json({ id: booking.id }, { status: 201 });
   } catch (err) {
     if (err instanceof SlotTakenError) {
+      // Free the authorized hold so the customer's card is not left blocked.
+      if (verifiedPaymentIntentId) {
+        try {
+          await releaseDeposit(verifiedPaymentIntentId);
+        } catch (releaseErr) {
+          console.error("Failed to release hold after slot race", releaseErr);
+        }
+      }
       return NextResponse.json({ error: err.message }, { status: 409 });
     }
     throw err;

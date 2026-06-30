@@ -130,3 +130,39 @@ Chunk 4.4 makes the deposit real. Decisions:
   key and a keyless environment falls back to a policy-only hold
   (deposit_status without a real PaymentIntent). Deposit settlement is a
   no-op without a real PaymentIntent id.
+
+## D-012: Real customer card entry via Stripe Elements (2026-06-29)
+
+Chunk 4.4 placed the hold server-side with a `pm_card_visa` test token, so
+there was no customer card-entry step (the gap in the customer-walk
+audit). 4.4b makes the card entry real:
+
+- **PaymentIntent-first, booking-on-confirm.** A deposit-bearing service
+  adds a "Payment" step after Review. On entry the wizard creates an
+  unconfirmed manual-capture PaymentIntent (`POST
+  /api/book/[slug]/deposit-intent`, card-only) and mounts Stripe
+  `<CardElement>`. The customer enters a card; `stripe.confirmCardPayment`
+  authorizes the hold (status requires_capture) directly with Stripe -- no
+  card data touches our server. Only then does the client POST the booking
+  with the PaymentIntent id.
+- **The booking route verifies before it writes.** It re-checks the intent
+  is requires_capture, priced exactly at the deposit, USD, and tagged for
+  this business, and that no other booking already holds it (replay guard).
+  A slot lost to a race releases the hold so the card is never left
+  blocked. The DB stays authoritative.
+- **CardElement, not PaymentElement.** A deposit is a card authorization
+  (auth now, capture/release later), so the intent is `payment_method_types:
+  ["card"]` and the UI is one clean card field -- not an accordion of
+  bank/wallet/Link methods that do not fit the hold model.
+- **Settlement is unchanged.** Cancel (D-009) and the no-show admin action
+  still release/capture the same real PaymentIntent; D-011's lifecycle is
+  intact. The legacy `authorizeDeposit(pm_card_visa)` path remains only for
+  the keyless unit test.
+- **Keyless fallback preserved.** Without a publishable key the wizard
+  skips the Payment step and books with a policy-only hold, exactly as
+  before.
+- **Verification.** `scripts/e2e-deposit.mjs` (API + live test keys: hold
+  visible uncaptured in Stripe, replay/tamper/no-hold rejected,
+  release-on-cancel) and `scripts/e2e-deposit-ui.mjs` (full browser card
+  entry into Elements through to a Held booking with a real, non-mock
+  PaymentIntent).
