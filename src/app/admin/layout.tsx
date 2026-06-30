@@ -1,31 +1,8 @@
 import type { ReactNode } from "react";
 import Link from "next/link";
-import {
-  BarChart3,
-  Calendar,
-  Users,
-  MessageSquare,
-  Settings,
-  Scissors,
-  LayoutDashboard,
-  LogOut,
-} from "lucide-react";
+import { LogOut } from "lucide-react";
 import { SlatewellLogo } from "@/components/slatewell-logo";
-
-const NAV = [
-  { href: "/admin", label: "Dashboard", icon: LayoutDashboard, active: true },
-  { href: "/admin/schedule", label: "Schedule", icon: Calendar, active: false },
-  { href: "/admin/services", label: "Services", icon: Scissors, active: false },
-  { href: "/admin/customers", label: "Customers", icon: Users, active: false },
-  {
-    href: "/admin/communications",
-    label: "Communications",
-    icon: MessageSquare,
-    active: false,
-  },
-  { href: "/admin/reports", label: "Reports", icon: BarChart3, active: false },
-  { href: "/admin/settings", label: "Settings", icon: Settings, active: false },
-];
+import { AdminNav } from "@/components/admin/admin-nav";
 
 export default function AdminLayout({ children }: { children: ReactNode }) {
   return (
@@ -37,29 +14,7 @@ export default function AdminLayout({ children }: { children: ReactNode }) {
             <SlatewellLogo className="text-base" />
           </Link>
         </div>
-        <nav className="flex-1 space-y-0.5 px-2 py-3">
-          {NAV.map(({ href, label, icon: Icon, active }) =>
-            active ? (
-              <Link
-                key={href}
-                href={href}
-                className="flex items-center gap-2.5 rounded-lg bg-sidebar-accent px-3 py-2 text-sm font-medium text-sidebar-primary transition-colors"
-              >
-                <Icon className="h-4 w-4 shrink-0" />
-                {label}
-              </Link>
-            ) : (
-              <span
-                key={label}
-                className="flex cursor-default items-center gap-2.5 rounded-lg px-3 py-2 text-sm font-medium text-muted-foreground/50"
-              >
-                <Icon className="h-4 w-4 shrink-0" />
-                {label}
-                <span className="ml-auto text-[10px]">soon</span>
-              </span>
-            )
-          )}
-        </nav>
+        <AdminNav />
         <div className="border-t border-border px-2 py-3">
           <form method="POST" action="/api/admin/session?signout=1">
             <button
