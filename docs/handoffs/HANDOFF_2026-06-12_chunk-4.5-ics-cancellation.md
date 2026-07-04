@@ -27,7 +27,7 @@
 - **PR #5: `scripts/verify-prod.mjs`** -- post-deploy e2e against the
   public URL, no DB access (token read from the confirmation page).
   Run after every deploy.
-- **Redeployed and verified:** deploy-demo.ps1 to DREWSPC, then
+- **Redeployed and verified:** deploy-demo.ps1 to <HOST>, then
   verify-prod 11/11 through Cloudflare (booking 201, confirmation,
   ICS content, https public origin via X-Forwarded-Proto, wrong-token
   403, full UI cancellation with deposit released).
@@ -43,7 +43,7 @@
 - 14 next@14 Dependabot alerts; Next 15 posture decision still with
   Drew (fleet-wide, see running handoff CURRENT STATE).
 - BROOKFIELD replication still skipped (ssh config icacls fix is with
-  Drew). Single-host on DREWSPC.
+  Drew). Single-host on <HOST>.
 - Reschedule is cancel + rebook (the cancel success state links to
   /book/[slug]); a true reschedule flow is not in scope until a later
   chunk if ever.
