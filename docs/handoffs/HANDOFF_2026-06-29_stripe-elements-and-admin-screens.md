@@ -53,7 +53,7 @@ Closed the two must-have gaps from Drew's gap analysis. Two stacked PRs.
   #17 first (GitHub auto-retargets #18 to main on merge since
   delete_branch_on_merge is on), then #18.
 - **No production deploy yet.** After merge, run `deploy-demo.ps1` to
-  DREWSPC, then `node scripts/verify-prod.mjs`. Production needs
+  <HOST>, then `node scripts/verify-prod.mjs`. Production needs
   `STRIPE_SECRET_KEY` + `STRIPE_PUBLISHABLE_KEY` +
   `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` set (TEST keys; Infisical/env, not
   hardcoded). `verify-prod.mjs` does not yet exercise the deposit path.
@@ -79,7 +79,7 @@ Closed the two must-have gaps from Drew's gap analysis. Two stacked PRs.
    `vstart`; check `C:\dev\DEMOS_RUNNING_HANDOFF.md`.
 2. Merge PR #17 then PR #18 (bottom-up). Confirm branches auto-deleted.
 3. Pop `stash@{0}` on main, sort the config files, commit.
-4. Deploy to DREWSPC with the three Stripe env vars set; run
+4. Deploy to <HOST> with the three Stripe env vars set; run
    `verify-prod.mjs`; smoke the deposit flow + admin screens in prod.
 5. Optional follow-ups: extend `verify-prod.mjs` to cover a deposit hold;
    editable per-service prep instructions (D-008); remaining admin nav
@@ -88,7 +88,7 @@ Closed the two must-have gaps from Drew's gap analysis. Two stacked PRs.
 ## Open questions for Drew
 
 - Confirm TEST Stripe keys are wired in the production env (Infisical) for
-  DREWSPC, same values as `_secrets/stripe_test_keys.local.txt`.
+  <HOST>, same values as `_secrets/stripe_test_keys.local.txt`.
 - Keep the four "soon" admin items (Customers/Comms/Reports/Settings)
   disabled for the demo, or build them too?
 
