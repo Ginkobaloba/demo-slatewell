@@ -18,6 +18,7 @@
   },
   "dependencies": {
     "@base-ui/react": "^1.5.0",
+    "@paradigm-codes/auth": "^0.1.0",
     "@stripe/react-stripe-js": "^3.10.0",
     "@stripe/stripe-js": "^7.9.0",
     "better-sqlite3": "^12.10.0",
