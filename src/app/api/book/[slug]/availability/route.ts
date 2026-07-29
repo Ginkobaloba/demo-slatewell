@@ -15,10 +15,8 @@ const querySchema = z.object({
   staffId: z.coerce.number().int().positive().optional(),
 });
 
-export async function GET(
-  req: NextRequest,
-  { params }: { params: { slug: string } }
-) {
+export async function GET(req: NextRequest, props: { params: Promise<{ slug: string }> }) {
+  const params = await props.params;
   const parsed = querySchema.safeParse(
     Object.fromEntries(req.nextUrl.searchParams)
   );

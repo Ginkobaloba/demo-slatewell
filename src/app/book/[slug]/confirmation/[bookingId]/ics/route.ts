@@ -8,8 +8,9 @@ export const dynamic = "force-dynamic";
 
 export async function GET(
   req: NextRequest,
-  { params }: { params: { slug: string; bookingId: string } }
+  props: { params: Promise<{ slug: string; bookingId: string }> }
 ) {
+  const params = await props.params;
   const business = getBusinessBySlug(params.slug);
   const booking = getBookingDetails(params.bookingId);
   if (!business || !booking || booking.business_id !== business.id) {

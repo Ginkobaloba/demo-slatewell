@@ -15,11 +15,12 @@ export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = { title: "Booking confirmed" };
 
-export default function ConfirmationPage({
-  params,
-}: {
-  params: { slug: string; bookingId: string };
-}) {
+export default async function ConfirmationPage(
+  props: {
+    params: Promise<{ slug: string; bookingId: string }>;
+  }
+) {
+  const params = await props.params;
   const booking = getBookingDetails(params.bookingId);
   if (!booking || booking.business_slug !== params.slug) notFound();
 

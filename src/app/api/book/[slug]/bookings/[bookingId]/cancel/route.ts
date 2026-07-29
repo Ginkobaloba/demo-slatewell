@@ -22,8 +22,9 @@ const bodySchema = z.object({
 
 export async function POST(
   req: NextRequest,
-  { params }: { params: { slug: string; bookingId: string } }
+  props: { params: Promise<{ slug: string; bookingId: string }> }
 ) {
+  const params = await props.params;
   const parsed = bodySchema.safeParse(await req.json().catch(() => null));
   if (!parsed.success) {
     return NextResponse.json({ error: "Invalid request" }, { status: 400 });

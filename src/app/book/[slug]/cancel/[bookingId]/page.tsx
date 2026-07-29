@@ -14,13 +14,14 @@ export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = { title: "Cancel appointment" };
 
-export default function CancelPage({
-  params,
-  searchParams,
-}: {
-  params: { slug: string; bookingId: string };
-  searchParams: { token?: string };
-}) {
+export default async function CancelPage(
+  props: {
+    params: Promise<{ slug: string; bookingId: string }>;
+    searchParams: Promise<{ token?: string }>;
+  }
+) {
+  const searchParams = await props.searchParams;
+  const params = await props.params;
   const business = getBusinessBySlug(params.slug);
   if (!business) notFound();
 

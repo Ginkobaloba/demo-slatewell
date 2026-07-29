@@ -35,10 +35,8 @@ const bodySchema = z.object({
  * availability and capabilities write to the same tables the customer slot
  * engine reads, so changes take effect on the next availability query.
  */
-export async function PUT(
-  req: NextRequest,
-  { params }: { params: { id: string } },
-) {
+export async function PUT(req: NextRequest, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   if (!isAdmin(req)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
