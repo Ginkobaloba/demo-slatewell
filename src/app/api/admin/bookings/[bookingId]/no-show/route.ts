@@ -14,10 +14,8 @@ const ADMIN_COOKIE = "slatewell_admin_session";
  * deposit (the late-cancellation/no-show side of the policy). Gated by the
  * demo admin cookie.
  */
-export async function POST(
-  req: NextRequest,
-  { params }: { params: { bookingId: string } },
-) {
+export async function POST(req: NextRequest, props: { params: Promise<{ bookingId: string }> }) {
+  const params = await props.params;
   if (!req.cookies.has(ADMIN_COOKIE)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }

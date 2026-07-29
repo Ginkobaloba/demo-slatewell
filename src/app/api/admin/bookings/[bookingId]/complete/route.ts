@@ -14,10 +14,8 @@ export const dynamic = "force-dynamic";
  * cookie. A Stripe error is logged, not surfaced -- the local state is
  * authoritative.
  */
-export async function POST(
-  req: NextRequest,
-  { params }: { params: { bookingId: string } },
-) {
+export async function POST(req: NextRequest, props: { params: Promise<{ bookingId: string }> }) {
+  const params = await props.params;
   if (!isAdmin(req)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }

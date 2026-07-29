@@ -13,16 +13,18 @@ import { SlatewellLogo } from "@/components/slatewell-logo";
 
 export const dynamic = "force-dynamic";
 
-export function generateMetadata({
-  params,
-}: {
-  params: { slug: string };
-}): Metadata {
+export async function generateMetadata(
+  props: {
+    params: Promise<{ slug: string }>;
+  }
+): Promise<Metadata> {
+  const params = await props.params;
   const business = getBusinessBySlug(params.slug);
   return { title: business ? `Book at ${business.name}` : "Book" };
 }
 
-export default function BookPage({ params }: { params: { slug: string } }) {
+export default async function BookPage(props: { params: Promise<{ slug: string }> }) {
+  const params = await props.params;
   const business = getBusinessBySlug(params.slug);
   if (!business) notFound();
 

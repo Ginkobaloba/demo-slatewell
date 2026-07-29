@@ -27,10 +27,8 @@ const bodySchema = z.object({
  * then verifies the authorized hold before writing the booking. No card
  * data ever touches this server.
  */
-export async function POST(
-  req: NextRequest,
-  { params }: { params: { slug: string } },
-) {
+export async function POST(req: NextRequest, props: { params: Promise<{ slug: string }> }) {
+  const params = await props.params;
   if (!isStripeConfigured()) {
     return NextResponse.json(
       { error: "Card deposits are not available right now." },

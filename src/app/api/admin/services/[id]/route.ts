@@ -9,10 +9,8 @@ export const dynamic = "force-dynamic";
 const BUSINESS_SLUG = "wave-wellness";
 
 /** PUT /api/admin/services/[id] -- update a service. Admin-only. */
-export async function PUT(
-  req: NextRequest,
-  { params }: { params: { id: string } },
-) {
+export async function PUT(req: NextRequest, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   if (!isAdmin(req)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }

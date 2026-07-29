@@ -97,11 +97,12 @@ function StatusDot({ status }: { status: "open" | "held" | "booked" }) {
   return <span className={`inline-block h-2.5 w-2.5 rounded-full ${classes}`} />;
 }
 
-export default function Home({
-  searchParams,
-}: {
-  searchParams: { admin?: string };
-}) {
+export default async function Home(
+  props: {
+    searchParams: Promise<{ admin?: string }>;
+  }
+) {
+  const searchParams = await props.searchParams;
   const requiresSignIn = searchParams.admin === "required";
 
   return (

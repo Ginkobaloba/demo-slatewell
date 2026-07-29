@@ -9,11 +9,12 @@ export const dynamic = "force-dynamic";
 
 const BUSINESS_SLUG = "wave-wellness";
 
-export default function SchedulePage({
-  searchParams,
-}: {
-  searchParams: { date?: string };
-}) {
+export default async function SchedulePage(
+  props: {
+    searchParams: Promise<{ date?: string }>;
+  }
+) {
+  const searchParams = await props.searchParams;
   const business = getBusinessBySlug(BUSINESS_SLUG);
   if (!business) {
     return <p className="text-muted-foreground">Business not found.</p>;
