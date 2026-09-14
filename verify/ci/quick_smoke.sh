@@ -4,6 +4,11 @@
 # ubuntu-latest and locally the same way. This is the real work behind the
 # "quick verify on every PR" gate. Layers that need a browser (selector_present,
 # axe, lcp) are skipped here and covered by the deep verify.
+#
+# redirects_to is NOT one of those layers. curl already follows redirects and
+# reports the URL it ended on, so the assertion is checkable here, and it has
+# to be: it used to fall through to the skip branch below, which meant every
+# redirect assertion in verify/smoke.yml silently proved nothing.
 set -uo pipefail
 
 SMOKE="${1:-verify/smoke.yml}"
@@ -27,7 +32,12 @@ for i in $(seq 0 $((count-1))); do
   case "$url" in http*) full="$url";; *) full="${deploy_url}${url}";; esac
   echo "== surface: $name ($full)"
   hdr="$(mktemp)"; bdy="$(mktemp)"
-  code="$(curl -sS -L -o "$bdy" -D "$hdr" -w '%{http_code}' "$full")" || { echo "  FAIL curl error"; fail=1; rm -f "$hdr" "$bdy"; continue; }
+  # Capture the landing URL alongside the status. -L is already on, so
+  # %{url_effective} is where the redirect chain ended; a URL never contains
+  # a literal space, so a single space is a safe separator.
+  probe="$(curl -sS -L -o "$bdy" -D "$hdr" -w '%{http_code} %{url_effective}' "$full")" || { echo "  FAIL curl error"; fail=1; rm -f "$hdr" "$bdy"; continue; }
+  code="${probe%% *}"
+  landed="${probe#* }"
   acount="$(yq -r ".surfaces[$i].assertions | length" "$SMOKE")"
   for j in $(seq 0 $((acount-1))); do
     atype="$(yq -r ".surfaces[$i].assertions[$j].type" "$SMOKE")"
@@ -41,6 +51,12 @@ for i in $(seq 0 $((count-1))); do
       text_present)
         t="$(yq -r ".surfaces[$i].assertions[$j].text" "$SMOKE")"
         if grep -qF "$t" "$bdy"; then echo "  ok text present"; else echo "  FAIL missing text: $t"; fail=1; fi;;
+      redirects_to)
+        exp="$(yq -r ".surfaces[$i].assertions[$j].expect" "$SMOKE")"
+        # Accept either convention in use across the demo repos: a fully
+        # qualified URL (this repo) or a bare path, resolved against deploy_url.
+        case "$exp" in /*) exp="${deploy_url}${exp}";; esac
+        if [ "$landed" = "$exp" ]; then echo "  ok redirects_to $exp"; else echo "  FAIL redirects_to expected $exp got $landed"; fail=1; fi;;
       *) echo "  skip $atype (browser-layer, covered in deep verify)";;
     esac
   done
