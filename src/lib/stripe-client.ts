@@ -3,21 +3,25 @@
 import { loadStripe, type Stripe } from "@stripe/stripe-js";
 
 /**
- * Browser-side Stripe.js singleton. loadStripe is memoized in a module
- * promise so Elements never re-initializes across wizard re-renders.
- * Reads the TEST publishable key (NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY),
- * inlined at build time. Returns null when no key is configured so the
- * wizard can fall back to a keyless (policy-only) booking.
+ * Browser-side Stripe.js loader. The TEST publishable key arrives as a prop
+ * from the server (read at request time, see getStripePublishableKey in
+ * ./stripe and D-013), not from a build-time NEXT_PUBLIC_ inline.
+ *
+ * loadStripe is memoized per key so Elements never re-initializes across
+ * wizard re-renders (the same key always returns the same promise). Returns
+ * a promise of null when no key is given.
  */
-let cached: Promise<Stripe | null> | null = null;
+const cache = new Map<string, Promise<Stripe | null>>();
+const NO_STRIPE: Promise<Stripe | null> = Promise.resolve(null);
 
-export function getStripeClient(): Promise<Stripe | null> {
-  const key = process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY;
-  if (!key) return Promise.resolve(null);
-  if (!cached) cached = loadStripe(key);
-  return cached;
-}
-
-export function isStripeClientConfigured(): boolean {
-  return Boolean(process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY);
+export function getStripeClient(
+  publishableKey: string | null | undefined,
+): Promise<Stripe | null> {
+  if (!publishableKey) return NO_STRIPE;
+  let promise = cache.get(publishableKey);
+  if (!promise) {
+    promise = loadStripe(publishableKey);
+    cache.set(publishableKey, promise);
+  }
+  return promise;
 }

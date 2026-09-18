@@ -12,6 +12,7 @@
     "lint": "next lint",
     "db:seed": "tsx scripts/seed.ts",
     "test:deposits": "tsx scripts/test-deposits.ts",
+    "test:stripe-config": "tsx scripts/test-stripe-config.ts",
     "test:portal-token": "tsx scripts/test-portal-token.ts",
     "test:portal-handoff": "tsx scripts/test-portal-handoff.ts",
     "test:portal-session": "tsx scripts/test-portal-session.ts"

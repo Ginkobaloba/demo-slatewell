@@ -35,14 +35,14 @@ interface BookingPayload {
 
 interface StepProps {
   slug: string;
+  /** Stripe TEST publishable key, delivered at runtime by the server page. */
+  publishableKey: string;
   depositCents: number;
   payload: BookingPayload;
   onBack: () => void;
   onSlotTaken: (message: string) => void;
   onConfirmed: (bookingId: string) => void;
 }
-
-const stripePromise = getStripeClient();
 
 const CARD_OPTIONS = {
   style: {
@@ -57,9 +57,13 @@ const CARD_OPTIONS = {
 };
 
 export function DepositPaymentStep(props: StepProps) {
+  // Memoized per key inside getStripeClient, so this is the same promise on
+  // every render and Elements never re-initializes.
+  const { publishableKey, ...formProps } = props;
+  const stripePromise = getStripeClient(publishableKey);
   return (
     <Elements stripe={stripePromise}>
-      <DepositForm {...props} />
+      <DepositForm {...formProps} />
     </Elements>
   );
 }
@@ -71,7 +75,7 @@ function DepositForm({
   onBack,
   onSlotTaken,
   onConfirmed,
-}: StepProps) {
+}: Omit<StepProps, "publishableKey">) {
   const stripe = useStripe();
   const elements = useElements();
   const [clientSecret, setClientSecret] = useState<string | null>(null);

@@ -57,13 +57,18 @@ export function BookingWizard({
   services,
   staffByService,
   weekdaysByStaff,
-  stripeEnabled,
+  stripePublishableKey,
 }: {
   slug: string;
   services: Service[];
   staffByService: Record<number, Staff[]>;
   weekdaysByStaff: Record<number, number[]>;
-  stripeEnabled: boolean;
+  /**
+   * Stripe TEST publishable key, read on the server at request time. Null
+   * unless the full card-entry deposit flow is configured (secret key AND
+   * publishable key), in which case the Payment step is skipped.
+   */
+  stripePublishableKey: string | null;
 }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -87,7 +92,7 @@ export function BookingWizard({
   // A deposit step is shown only when the chosen service holds a deposit
   // and Stripe is live. Keyless or zero-deposit services confirm directly.
   const needsDeposit = Boolean(
-    service && service.deposit_cents > 0 && stripeEnabled,
+    service && service.deposit_cents > 0 && stripePublishableKey,
   );
 
   // The furthest step the current selections can support. A deep link or a
@@ -479,7 +484,12 @@ export function BookingWizard({
         </StepShell>
       )}
 
-      {step === 5 && service && slot && date && needsDeposit && (
+      {step === 5 &&
+        service &&
+        slot &&
+        date &&
+        needsDeposit &&
+        stripePublishableKey && (
         <StepShell
           headingRef={headingRef}
           title="Secure your booking with a deposit"
@@ -491,6 +501,7 @@ export function BookingWizard({
             return (
               <DepositPaymentStep
                 slug={slug}
+                publishableKey={stripePublishableKey}
                 depositCents={service.deposit_cents}
                 payload={payload}
                 onBack={() => goTo(4)}
