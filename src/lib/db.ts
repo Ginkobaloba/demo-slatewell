@@ -5,6 +5,7 @@ import {
   ensureVisitorScopeColumns,
   maybePurgeExpiredVisitorData,
 } from "@/lib/retention";
+import { ensureRevocationTable } from "@/lib/session-revocation";
 
 const DB_PATH =
   process.env.SLATEWELL_DB_PATH ??
@@ -19,8 +20,9 @@ declare global {
  * Singleton SQLite handle, cached on globalThis so Next.js dev-mode HMR
  * does not leak file handles by re-opening on every reload.
  *
- * On first open it applies the D-014 schema upgrade; on every call it gives
- * the visitor-data expiry a chance to run (itself throttled to hourly).
+ * On first open it applies the D-014 schema upgrade and makes sure the D-015
+ * sign-out revocation table exists; on every call it gives the visitor-data
+ * and expired-revocation purge a chance to run (itself throttled to hourly).
  */
 export function getDb(): Database.Database {
   let db = globalThis.__slatewellDb;
@@ -34,6 +36,7 @@ export function getDb(): Database.Database {
     db.pragma("journal_mode = WAL");
     db.pragma("foreign_keys = ON");
     ensureVisitorScopeColumns(db);
+    ensureRevocationTable(db);
     globalThis.__slatewellDb = db;
   }
   maybePurgeExpiredVisitorData(db);

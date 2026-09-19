@@ -73,7 +73,8 @@ assertions:
 
 ---
 
-# --- 4. Sign-out clears the cookie and redirects to / ---
+# --- 4. Sign-out revokes the session server-side (D-015), clears the
+# cookie, and redirects to / ---
 
 surface: admin-signout
 url: /api/admin/session?signout=1
@@ -82,3 +83,6 @@ assertions:
   - { type: http_status, expect: 303 }
   # After sign-out, /admin must redirect back to home (cookie cleared)
   # -- verify runner should navigate to /admin after sign-out to confirm
+  # -- D-015: a COPY of the pre-sign-out cookie pair (session + visitor) must
+  #    also be refused on every /admin page and /api/admin handler; see
+  #    scripts/e2e-visitor-scope.mjs (browser E) for the reference check

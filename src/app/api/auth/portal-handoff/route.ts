@@ -83,9 +83,12 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ ok: false, reason: "not_found" }, { status: 404 });
   }
 
-  const { visitorId, isNew } = resolveVisitorId(request.cookies);
+  const visitor = await resolveVisitorId(request.cookies);
+  if (!visitor.ok) {
+    return NextResponse.json({ ok: false, reason: "not_found" }, { status: 404 });
+  }
   const { token, expiresAt } = await mintAdminSession({
-    visitorId,
+    visitorId: visitor.visitorId,
     src: "portal",
     subject: verified.email,
     customerId: verified.customerId ?? null,
@@ -105,6 +108,6 @@ export async function POST(request: NextRequest) {
     ...adminSessionCookieAttributes(expiresAt),
     value: token,
   });
-  if (isNew) setVisitorCookie(res, visitorId);
+  if (visitor.isNew) await setVisitorCookie(res, visitor.visitorId);
   return res;
 }

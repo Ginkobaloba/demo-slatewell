@@ -7,8 +7,14 @@ import {
 /**
  * Admin gate (D-014). A cookie with the right name is no longer enough: the
  * session must carry a valid HMAC-SHA-256 signature and be bound to this
- * browser's visitor cookie. Route handlers and pages re-check the same thing
- * (src/lib/admin-auth.ts); this is the first line, not the only one.
+ * browser's signed visitor cookie (D-016). Route handlers and pages re-check
+ * the same thing (src/lib/admin-auth.ts); this is the first line, not the
+ * only one.
+ *
+ * Sign-out revocation (D-015) is NOT checked here: this runs in the Edge
+ * runtime, which cannot reach SQLite. A signed-out cookie pair still passes
+ * this layer and is refused by authorizeAdmin() in every admin page and
+ * admin API handler, which is the authoritative gate.
  *
  * - Admin area not configured (no usable SESSION_SECRET): 404 everywhere.
  * - /admin pages without a valid session: back to the landing page.

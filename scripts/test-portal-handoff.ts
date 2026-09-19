@@ -9,7 +9,10 @@
  * customer downshift to the public landing, and rejection of invalid
  * tokens. D-014: the minted session is the same signed, visitor-bound
  * session the demo button issues (no wider scope), and the route 404s when
- * the admin area is not configured. Exits nonzero on any failure.
+ * the admin area is not configured. D-016: the visitor cookie it mints is
+ * signed, a signed existing one is reused, and an unsigned or tampered one
+ * is replaced by a fresh visitor rather than trusted. Exits nonzero on any
+ * failure.
  *
  * We import the handler module directly so we cover the actual code path
  * an HTTP request would hit, not a parallel transport.
@@ -30,6 +33,9 @@ import {
   ADMIN_SESSION_COOKIE as ADMIN_COOKIE,
   VISITOR_COOKIE,
   checkAdminCookies,
+  signVisitorId,
+  verifyAdminSession,
+  verifyVisitorCookie,
 } from "../src/lib/admin-session";
 import { __resetPortalTokenCache } from "../src/lib/portal-token";
 
@@ -177,33 +183,49 @@ async function main() {
       // it, and verifies through the same gate the middleware uses.
       const jar = setCookies(res);
       const visitor = jar[VISITOR_COOKIE] ?? "";
-      check("staff: visitor cookie minted", /^[0-9a-f]{32}$/.test(visitor), jar);
+      const visitorId = await verifyVisitorCookie(visitor);
+      check("staff: signed visitor cookie minted", visitorId !== null, JSON.stringify(jar));
       const gate = await checkAdminCookies({
         get: (name) => (jar[name] ? { value: jar[name] } : undefined),
       });
       check("staff: session passes the admin gate", gate.status === "ok");
       check(
         "staff: session scope is this browser only",
-        gate.status === "ok" && gate.visitorId === visitor,
+        gate.status === "ok" && gate.visitorId === visitorId,
       );
     }
 
-    // --- an existing visitor cookie is reused, not replaced -------------
+    // --- an existing SIGNED visitor cookie is reused, not replaced -------
     {
       const existing = "c".repeat(32);
+      const existingCookie = (await signVisitorId(existing)) as string;
       const token = await sign(active, { role: "staff" });
-      const res = await POST(postJson({ token }, `${VISITOR_COOKIE}=${existing}`));
+      const res = await POST(postJson({ token }, `${VISITOR_COOKIE}=${existingCookie}`));
       const jar = setCookies(res);
-      check("reuse: no new visitor cookie", !(VISITOR_COOKIE in jar), jar);
+      check("reuse: no new visitor cookie", !(VISITOR_COOKIE in jar), JSON.stringify(jar));
       const gate = await checkAdminCookies({
         get: (name) =>
           name === VISITOR_COOKIE
-            ? { value: existing }
+            ? { value: existingCookie }
             : jar[name]
               ? { value: jar[name] }
               : undefined,
       });
       check("reuse: session bound to the existing visitor id", gate.status === "ok" && gate.visitorId === existing);
+    }
+
+    // --- D-016: an unsigned or tampered visitor cookie is never trusted --
+    for (const [label, value] of [
+      ["unsigned bare id", "d".repeat(32)],
+      ["tampered tag", `${"d".repeat(32)}.${"A".repeat(43)}`],
+    ] as const) {
+      const token = await sign(active, { role: "staff" });
+      const res = await POST(postJson({ token }, `${VISITOR_COOKIE}=${value}`));
+      const jar = setCookies(res);
+      const fresh = await verifyVisitorCookie(jar[VISITOR_COOKIE]);
+      check(`${label}: a fresh signed visitor cookie is issued`, fresh !== null && fresh !== "d".repeat(32), JSON.stringify(jar));
+      const session = await verifyAdminSession(jar[ADMIN_COOKIE]);
+      check(`${label}: session bound to the fresh id, not the claimed one`, session?.vid === fresh && session?.vid !== "d".repeat(32));
     }
 
     // --- admin area not configured: verified staff still get 404 --------

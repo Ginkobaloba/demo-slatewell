@@ -8,6 +8,7 @@ import {
 } from "@/lib/repo";
 import { createDepositIntent } from "@/lib/deposits";
 import { isDepositCardFlowEnabled } from "@/lib/stripe";
+import { isAdminConfigured } from "@/lib/admin-session";
 
 export const dynamic = "force-dynamic";
 
@@ -29,6 +30,15 @@ const bodySchema = z.object({
  */
 export async function POST(req: NextRequest, props: { params: Promise<{ slug: string }> }) {
   const params = await props.params;
+  // D-016: the booking route refuses every write without a usable
+  // SESSION_SECRET (no visitor can be signed). Refuse here too, before any
+  // card hold exists, so a customer is never left with a stranded hold.
+  if (!isAdminConfigured()) {
+    return NextResponse.json(
+      { error: "Online booking is temporarily unavailable." },
+      { status: 503 },
+    );
+  }
   if (!isDepositCardFlowEnabled()) {
     return NextResponse.json(
       { error: "Card deposits are not available right now." },

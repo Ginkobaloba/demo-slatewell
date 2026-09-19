@@ -15,13 +15,13 @@ export async function GET(
   const params = await props.params;
   const business = getBusinessBySlug(params.slug);
   const booking = getBookingDetails(params.bookingId);
-  // D-014: same rule as the confirmation page. The .ics carries the cancel
+  // D-014/D-016: same rule as the confirmation page (signed visitor cookie). The .ics carries the cancel
   // link (with its token), so only the booking's own browser may fetch it.
   if (
     !business ||
     !booking ||
     booking.business_id !== business.id ||
-    !isOwnBooking(booking, readVisitorId(req.cookies))
+    !isOwnBooking(booking, await readVisitorId(req.cookies))
   ) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }

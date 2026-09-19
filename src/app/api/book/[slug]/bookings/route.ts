@@ -39,6 +39,22 @@ export async function POST(req: NextRequest, props: { params: Promise<{ slug: st
       { status: 400 }
     );
   }
+  // D-014/D-016: tag the booking with this browser's signed visitor id
+  // (minted on the first booking, or when the cookie does not verify) so
+  // only this browser can see it in the confirmation page, the .ics
+  // download, and the demo admin views. Resolved before any Stripe work: with
+  // no usable SESSION_SECRET a visitor cannot be signed, and a booking with
+  // no verifiable owner would be unreadable by its customer, so the write is
+  // refused outright (fail closed, D-016).
+  const visitor = await resolveVisitorId(req.cookies);
+  if (!visitor.ok) {
+    return NextResponse.json(
+      { error: "Online booking is temporarily unavailable." },
+      { status: 503 },
+    );
+  }
+  const { visitorId, isNew } = visitor;
+
   const business = getBusinessBySlug(params.slug);
   if (!business) {
     return NextResponse.json({ error: "Unknown business" }, { status: 404 });
@@ -87,11 +103,6 @@ export async function POST(req: NextRequest, props: { params: Promise<{ slug: st
     verifiedPaymentIntentId = piId;
   }
 
-  // D-014: tag the booking with this browser's visitor id (minted on the
-  // first booking) so only this browser can see it in the confirmation page,
-  // the .ics download, and the demo admin views.
-  const { visitorId, isNew } = resolveVisitorId(req.cookies);
-
   try {
     const booking = createBooking({
       business,
@@ -105,7 +116,7 @@ export async function POST(req: NextRequest, props: { params: Promise<{ slug: st
       visitorId,
     });
     const res = NextResponse.json({ id: booking.id }, { status: 201 });
-    if (isNew) setVisitorCookie(res, visitorId);
+    if (isNew) await setVisitorCookie(res, visitorId);
     return res;
   } catch (err) {
     if (err instanceof SlotTakenError) {

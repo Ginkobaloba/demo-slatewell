@@ -9,6 +9,10 @@
  * fail-closed secret rules (missing, short, published placeholder, and the
  * mangled-env-line rules: whitespace, path fragments, "generated " prefix,
  * logged by rule name without the value).
+ * D-016: the signed visitor cookie (round trip, tamper, unsigned legacy
+ * value, foreign secret, non-canonical encoding, key separation from the
+ * admin session key, fail closed without a secret), and that the admin gate
+ * only accepts a session bound to a SIGNED visitor cookie.
  * Exits nonzero on any failure.
  */
 import { SignJWT } from "jose";
@@ -21,7 +25,10 @@ import {
   mintAdminSession,
   randomId128,
   sessionSecretProblem,
+  signVisitorId,
   verifyAdminSession,
+  verifyVisitorCookie,
+  VISITOR_KEY_LABEL,
   type CookieReader,
   type SecretProblem,
 } from "../src/lib/admin-session";
@@ -102,14 +109,72 @@ async function main() {
     .sign(new TextEncoder().encode(SECRET));
   check("expired token rejected", (await verifyAdminSession(expired)) === null);
 
+  // --- signed visitor cookie (D-016) --------------------------------------
+  const B64URL = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+  const signedA = (await signVisitorId(VISITOR_A)) as string;
+  const signedB = (await signVisitorId(VISITOR_B)) as string;
+  check("visitor: signed value is <id>.<43-char tag>", /^[0-9a-f]{32}\.[A-Za-z0-9_-]{43}$/.test(signedA), signedA);
+  check("visitor: signed value starts with the id", signedA.startsWith(`${VISITOR_A}.`));
+  check("visitor: signing is deterministic per id", (await signVisitorId(VISITOR_A)) === signedA);
+  check("visitor: signed cookie verifies to its id", (await verifyVisitorCookie(signedA)) === VISITOR_A);
+  check("visitor: unsigned bare hex (pre-D-016 format) rejected", (await verifyVisitorCookie(VISITOR_A)) === null);
+  check(
+    "visitor: empty / missing rejected",
+    (await verifyVisitorCookie("")) === null && (await verifyVisitorCookie(undefined)) === null,
+  );
+  const tagA = signedA.split(".")[1];
+  const tagB = signedB.split(".")[1];
+  check("visitor: B's tag on A's id rejected", (await verifyVisitorCookie(`${VISITOR_A}.${tagB}`)) === null);
+  const otherId = VISITOR_A.slice(0, 31) + (VISITOR_A[31] === "0" ? "1" : "0");
+  check("visitor: one id char changed under a valid tag rejected", (await verifyVisitorCookie(`${otherId}.${tagA}`)) === null);
+  const flipTag = tagA.slice(0, 10) + (tagA[10] === "A" ? "B" : "A") + tagA.slice(11);
+  check("visitor: one tag char changed rejected", (await verifyVisitorCookie(`${VISITOR_A}.${flipTag}`)) === null);
+  // The last base64url char holds 2 unused bits; a non-canonical spelling
+  // that decodes to the same bytes must still be refused.
+  const nonCanonical = tagA.slice(0, 42) + B64URL[B64URL.indexOf(tagA[42]) ^ 1];
+  check("visitor: non-canonical tag encoding rejected", (await verifyVisitorCookie(`${VISITOR_A}.${nonCanonical}`)) === null);
+  check("visitor: truncated tag rejected", (await verifyVisitorCookie(signedA.slice(0, -1))) === null);
+  check("visitor: extra segment rejected", (await verifyVisitorCookie(`${signedA}.x`)) === null);
+  check("visitor: uppercase value rejected", (await verifyVisitorCookie(signedA.toUpperCase())) === null);
+  check("visitor: whitespace-padded value rejected", (await verifyVisitorCookie(` ${signedA}`)) === null);
+  check("visitor: admin JWT is not a visitor cookie", (await verifyVisitorCookie(token)) === null);
+
+  // Key separation: the tag is NOT HMAC(raw secret, id), i.e. not what the
+  // admin-session key would produce over the same bytes.
+  {
+    const subtle = globalThis.crypto.subtle;
+    const enc = new TextEncoder();
+    const rawKey = await subtle.importKey("raw", enc.encode(SECRET), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+    const rawTag = Buffer.from(await subtle.sign("HMAC", rawKey, enc.encode(VISITOR_A))).toString("base64url");
+    check("visitor: key is domain-separated from the admin session key", rawTag !== tagA);
+    check("visitor: tag under the raw admin key does not verify", (await verifyVisitorCookie(`${VISITOR_A}.${rawTag}`)) === null);
+    // Positive control: recompute the tag from the documented derivation.
+    const derived = await subtle.sign("HMAC", rawKey, enc.encode(VISITOR_KEY_LABEL));
+    const visitorKey = await subtle.importKey("raw", derived, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+    const expected = Buffer.from(await subtle.sign("HMAC", visitorKey, enc.encode(VISITOR_A))).toString("base64url");
+    check("visitor: tag = HMAC(HMAC(secret, label), id)", expected === tagA, { expected, tagA });
+  }
+
+  // Foreign secret: a cookie signed under another SESSION_SECRET is refused.
+  process.env.SESSION_SECRET = "f".repeat(48);
+  const foreignA = (await signVisitorId(VISITOR_A)) as string;
+  check("visitor: another secret yields another tag", foreignA !== signedA);
+  process.env.SESSION_SECRET = SECRET;
+  check("visitor: cookie signed under another secret rejected", (await verifyVisitorCookie(foreignA)) === null);
+  check("visitor: own cookie still verifies after switching back", (await verifyVisitorCookie(signedA)) === VISITOR_A);
+
   // --- visitor binding (checkAdminCookies) -------------------------------
-  const ok = await checkAdminCookies(jar({ [ADMIN_SESSION_COOKIE]: token, [VISITOR_COOKIE]: VISITOR_A }));
-  check("binding: matching visitor cookie -> ok", ok.status === "ok" && ok.visitorId === VISITOR_A, ok);
-  const wrongVisitor = await checkAdminCookies(jar({ [ADMIN_SESSION_COOKIE]: token, [VISITOR_COOKIE]: VISITOR_B }));
+  const ok = await checkAdminCookies(jar({ [ADMIN_SESSION_COOKIE]: token, [VISITOR_COOKIE]: signedA }));
+  check("binding: matching signed visitor cookie -> ok", ok.status === "ok" && ok.visitorId === VISITOR_A, ok);
+  const unsignedBinding = await checkAdminCookies(jar({ [ADMIN_SESSION_COOKIE]: token, [VISITOR_COOKIE]: VISITOR_A }));
+  check("binding: matching but UNSIGNED visitor cookie -> unauthenticated", unsignedBinding.status === "unauthenticated");
+  const foreignBinding = await checkAdminCookies(jar({ [ADMIN_SESSION_COOKIE]: token, [VISITOR_COOKIE]: foreignA }));
+  check("binding: visitor cookie signed under another secret -> unauthenticated", foreignBinding.status === "unauthenticated");
+  const wrongVisitor = await checkAdminCookies(jar({ [ADMIN_SESSION_COOKIE]: token, [VISITOR_COOKIE]: signedB }));
   check("binding: another browser's visitor cookie -> unauthenticated", wrongVisitor.status === "unauthenticated");
   const noVisitor = await checkAdminCookies(jar({ [ADMIN_SESSION_COOKIE]: token }));
   check("binding: no visitor cookie -> unauthenticated", noVisitor.status === "unauthenticated");
-  const forged = await checkAdminCookies(jar({ [ADMIN_SESSION_COOKIE]: "demo-admin", [VISITOR_COOKIE]: VISITOR_A }));
+  const forged = await checkAdminCookies(jar({ [ADMIN_SESSION_COOKIE]: "demo-admin", [VISITOR_COOKIE]: signedA }));
   check("forged cookie with the right name -> unauthenticated", forged.status === "unauthenticated");
   const none = await checkAdminCookies(jar({}));
   check("no cookies -> unauthenticated", none.status === "unauthenticated");
@@ -128,6 +193,8 @@ async function main() {
     threw = true;
   }
   check("missing secret -> mint throws", threw);
+  check("missing secret -> no visitor cookie can be signed", (await signVisitorId(VISITOR_A)) === null);
+  check("missing secret -> a previously valid visitor cookie no longer verifies", (await verifyVisitorCookie(signedA)) === null);
   process.env.SESSION_SECRET = "tooshort";
   check("short secret -> not configured", !isAdminConfigured());
   process.env.SESSION_SECRET = "replace-with-a-real-32-plus-char-random-secret";
