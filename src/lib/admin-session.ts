@@ -296,6 +296,35 @@ export async function mintAdminSession(args: {
  * outright (W2, #35 deep verify): the app never mints one without all
  * three, but a holder of SESSION_SECRET could sign one by hand, and a
  * non-expiring or revocation-proof (no `jti`) session must never verify.
+ *
+ * `requiredClaims` alone only checks PRESENCE, not value (W1, #38 deep
+ * verify): `jose` validates `iat`'s value against the clock only when
+ * `maxTokenAge` is set, and it never relates `exp` to `iat` at all. Without
+ * more, a holder of SESSION_SECRET could still hand-sign an "accepted"
+ * token with `exp` decades out, `iat` in the future, `iat` after `exp`,
+ * `iat` at or before the epoch, or a fractional `exp`/`iat`. Two layers
+ * close that:
+ *   - `maxTokenAge: SESSION_TTL_SECONDS` makes `jose` itself reject an
+ *     `iat` more than the session TTL in the past (catches `iat` at/near
+ *     the epoch or otherwise stale) or an `iat` in the future at all (zero
+ *     clock tolerance; see below for why none is added).
+ *   - An explicit check below requires `exp - iat` to be a positive
+ *     integer no greater than SESSION_TTL_SECONDS. `maxTokenAge` bounds
+ *     `iat` against "now" but never against `exp`, so it does not by
+ *     itself stop a token minted this second with `exp` set 100 years
+ *     out; this check does. It also rejects a fractional `exp` or `iat`,
+ *     which `jose` accepts as long as it is a finite number, and it
+ *     independently refuses `iat` after `exp` (in practice already
+ *     unreachable given the two checks above: an unexpired token with
+ *     `iat` after `exp` requires `iat` in the future, which `maxTokenAge`
+ *     already refused).
+ *   - No clock tolerance is added anywhere in this check. Mint and verify
+ *     both read `Date.now()` in the same process (no cross-host clock
+ *     skew to absorb), and nothing else in this codebase uses
+ *     `clockTolerance`; adding one here would only open back up the exact
+ *     slack (a few seconds of "future" `iat`, or `exp` a few seconds past
+ *     `iat + TTL`) this fix exists to close, for no compensating benefit.
+ *
  * Does NOT check the visitor binding; use checkAdminCookies for that.
  */
 export async function verifyAdminSession(
@@ -307,6 +336,7 @@ export async function verifyAdminSession(
     const { payload } = await jwtVerify(token, secret, {
       algorithms: ["HS256"],
       requiredClaims: ["exp", "iat", "jti"],
+      maxTokenAge: SESSION_TTL_SECONDS,
     });
     if (
       typeof payload.jti !== "string" ||
@@ -314,6 +344,17 @@ export async function verifyAdminSession(
       !isValidVisitorId(payload.vid) ||
       (payload.src !== "demo" && payload.src !== "portal") ||
       typeof payload.sub !== "string"
+    ) {
+      return null;
+    }
+    const { exp, iat } = payload;
+    if (
+      typeof exp !== "number" ||
+      typeof iat !== "number" ||
+      !Number.isInteger(exp) ||
+      !Number.isInteger(iat) ||
+      exp - iat <= 0 ||
+      exp - iat > SESSION_TTL_SECONDS
     ) {
       return null;
     }

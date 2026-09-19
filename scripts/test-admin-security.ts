@@ -26,8 +26,14 @@
  *     never written to the revocation table;
  *   - W2 (#35 deep verify): a validly signed admin token missing exp, iat, or
  *     jti is refused at the Edge middleware, the page guard (authorizeAdmin),
- *     and every API guard (requireAdminApi), and never mutates data; a
- *     normal session still passes every guard;
+ *     and every API guard (requireAdminApi, all five handlers), and never
+ *     mutates data; a normal session still passes every guard;
+ *   - W1 (#38 deep verify): a validly signed admin token whose exp/iat
+ *     values are hostile (exp decades out, iat in the future, iat after
+ *     exp, iat at/before the epoch, a fractional exp or iat, or a lifetime
+ *     over the session TTL) is refused at the same three layers as W2, and
+ *     never mutates data; a token with exp - iat exactly at the TTL
+ *     boundary still passes;
  *   - coverage: every admin page (and the layout) calls requireAdminPage and
  *     every exported handler under src/app/api/admin (except the sign-in
  *     endpoint) calls requireAdminApi, so no admin path skips revocation.
@@ -142,6 +148,7 @@ async function main() {
   const { SignJWT } = await import("jose");
   const {
     ADMIN_SESSION_COOKIE,
+    SESSION_TTL_SECONDS,
     VISITOR_COOKIE,
     randomId128,
     signVisitorId,
@@ -325,19 +332,22 @@ async function main() {
     deposit_cents: 0, buffer_before_min: 0, buffer_after_min: 0, active: 1,
   };
   const staffBody = { name: "Hacked", title: null, color: "#000000", active: 1, serviceIds: [1], availability: [] };
+  // Shared by every "does this cookie get past auth" check below (sections
+  // 5, 5b, 5c, and 9): the five admin API handlers this app has.
+  const allAdminApis = async (cookie: string) => ({
+    complete: (await completeRoute.POST(req(`/api/admin/bookings/${bookingA}/complete`, { method: "POST", cookie }), bookingParams(bookingA))).status,
+    noShow: (await noShowRoute.POST(req(`/api/admin/bookings/${bookingA}/no-show`, { method: "POST", cookie }), bookingParams(bookingA))).status,
+    servicesPost: (await servicesRoute.POST(req("/api/admin/services", { method: "POST", cookie, body: serviceBody }))).status,
+    servicePut: (await serviceRoute.PUT(req("/api/admin/services/1", { method: "PUT", cookie, body: serviceBody }), { params: Promise.resolve({ id: "1" }) })).status,
+    staffPut: (await staffRoute.PUT(req("/api/admin/staff/1", { method: "PUT", cookie, body: staffBody }), { params: Promise.resolve({ id: "1" }) })).status,
+  });
   for (const [label, cookie] of [
     ["forged", forgedCookie],
     ["wrong secret", `${ADMIN_SESSION_COOKIE}=${wrongSecretToken}; ${cookieA}`],
     ["replayed in another browser", `${ADMIN_SESSION_COOKIE}=${signA.token}; ${cookieB}`],
     ["A's session + unsigned visitor id", `${ADMIN_SESSION_COOKIE}=${signA.token}; ${VISITOR_COOKIE}=${visitorA}`],
   ] as const) {
-    const results: Record<string, number> = {
-      complete: (await completeRoute.POST(req(`/api/admin/bookings/${bookingA}/complete`, { method: "POST", cookie }), bookingParams(bookingA))).status,
-      noShow: (await noShowRoute.POST(req(`/api/admin/bookings/${bookingA}/no-show`, { method: "POST", cookie }), bookingParams(bookingA))).status,
-      servicesPost: (await servicesRoute.POST(req("/api/admin/services", { method: "POST", cookie, body: serviceBody }))).status,
-      servicePut: (await serviceRoute.PUT(req("/api/admin/services/1", { method: "PUT", cookie, body: serviceBody }), { params: Promise.resolve({ id: "1" }) })).status,
-      staffPut: (await staffRoute.PUT(req("/api/admin/staff/1", { method: "PUT", cookie, body: staffBody }), { params: Promise.resolve({ id: "1" }) })).status,
-    };
+    const results = await allAdminApis(cookie);
     check(`handlers: ${label} cookie -> 401 on all five admin APIs`, Object.values(results).every((s) => s === 401), results);
   }
   const svc = db.prepare("SELECT name FROM services WHERE id = 1").get() as { name: string };
@@ -390,12 +400,8 @@ async function main() {
     const pageGuard = await authorizeAdmin(jarOf(cookie));
     check(`page guard (authorizeAdmin): token with ${label} -> unauthenticated`, pageGuard.status === "unauthenticated", pageGuard);
 
-    const apiResults: Record<string, number> = {
-      complete: (await completeRoute.POST(req(`/api/admin/bookings/${bookingA}/complete`, { method: "POST", cookie }), bookingParams(bookingA))).status,
-      servicesPost: (await servicesRoute.POST(req("/api/admin/services", { method: "POST", cookie, body: serviceBody }))).status,
-      staffPut: (await staffRoute.PUT(req("/api/admin/staff/1", { method: "PUT", cookie, body: staffBody }), { params: Promise.resolve({ id: "1" }) })).status,
-    };
-    check(`API guard (requireAdminApi): token with ${label} -> 401 on all three admin APIs`, Object.values(apiResults).every((s) => s === 401), apiResults);
+    const apiResults = await allAdminApis(cookie);
+    check(`API guard (requireAdminApi): token with ${label} -> 401 on all five admin APIs`, Object.values(apiResults).every((s) => s === 401), apiResults);
   }
   const afterMissingClaims = db.prepare("SELECT status FROM bookings WHERE id = ?").get(bookingA) as { status: string };
   check("W2: rejected missing-claim tokens changed nothing on booking A", afterMissingClaims.status === "Confirmed", afterMissingClaims);
@@ -403,6 +409,78 @@ async function main() {
   check("W2: rejected missing-claim tokens left the service untouched", svcAfterMissingClaims.name === "Facial", svcAfterMissingClaims);
   const staffAfterMissingClaims = db.prepare("SELECT name FROM staff WHERE id = 1").get() as { name: string };
   check("W2: rejected missing-claim tokens left staff untouched", staffAfterMissingClaims.name === "Maya", staffAfterMissingClaims);
+
+  // --- 5c. Sessions with a hostile exp/iat are rejected everywhere (W1,
+  // #38 deep verify). requiredClaims (5b, D-018) only checks that exp, iat,
+  // and jti are PRESENT; jose only validates iat's value when maxTokenAge
+  // is set, and never relates exp to iat at all. A holder of SESSION_SECRET
+  // could otherwise hand-sign a validly-shaped token with exp decades out,
+  // iat in the future, iat after exp, iat at/before the epoch, or a
+  // fractional exp/iat, and have it accepted. verifyAdminSession must now
+  // refuse each of these at the same three layers as 5b.
+  const w1Now = Math.floor(Date.now() / 1000);
+  const w1Header = Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT" })).toString("base64url");
+  const w1Key = await globalThis.crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(SECRET),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+  async function signHostileAdminToken(exp: unknown, iat: unknown): Promise<string> {
+    const payload = Buffer.from(
+      JSON.stringify({ vid: visitorA, src: "demo", role: "staff", sub: "demo-admin", jti: randomId128(), exp, iat }),
+    ).toString("base64url");
+    const data = `${w1Header}.${payload}`;
+    const sig = Buffer.from(
+      await globalThis.crypto.subtle.sign("HMAC", w1Key, new TextEncoder().encode(data)),
+    ).toString("base64url");
+    return `${data}.${sig}`;
+  }
+  const YEAR = 365 * 24 * 3600;
+  const hostileTokens: Array<[string, string]> = [
+    ["exp 100 years out (fresh iat)", await signHostileAdminToken(w1Now + 100 * YEAR, w1Now)],
+    ["iat in the future", await signHostileAdminToken(w1Now + 3660, w1Now + 3600)],
+    ["iat after exp, both in the future", await signHostileAdminToken(w1Now + 60, w1Now + 120)],
+    ["iat after exp, already expired", await signHostileAdminToken(w1Now - 30, w1Now)],
+    ["iat at the epoch", await signHostileAdminToken(w1Now + 60, 0)],
+    ["negative iat", await signHostileAdminToken(w1Now + 60, -1000)],
+    ["fractional exp", await signHostileAdminToken(w1Now + 60.5, w1Now)],
+    ["fractional iat", await signHostileAdminToken(w1Now + 60, w1Now - 0.5)],
+    ["exp equal to iat (zero lifetime)", await signHostileAdminToken(w1Now, w1Now)],
+    ["exp - iat one second over the TTL", await signHostileAdminToken(w1Now + SESSION_TTL_SECONDS + 1, w1Now)],
+  ];
+  for (const [label, hostileToken] of hostileTokens) {
+    const cookie = `${ADMIN_SESSION_COOKIE}=${hostileToken}; ${cookieA}`;
+
+    for (const page of ["/admin", "/admin/schedule"]) {
+      const res = await middleware(req(page, { cookie }));
+      const loc = res.headers.get("location") ?? "";
+      check(`middleware ${page}: token with ${label} -> redirect home`, res.status === 307 && loc.endsWith("/?admin=required"), { status: res.status, loc });
+    }
+    const mwApi = await middleware(req("/api/admin/services", { method: "POST", cookie }));
+    check(`middleware /api/admin/services: token with ${label} -> 401`, mwApi.status === 401, mwApi.status);
+
+    const pageGuard = await authorizeAdmin(jarOf(cookie));
+    check(`page guard (authorizeAdmin): token with ${label} -> unauthenticated`, pageGuard.status === "unauthenticated", pageGuard);
+
+    const apiResults = await allAdminApis(cookie);
+    check(`API guard (requireAdminApi): token with ${label} -> 401 on all five admin APIs`, Object.values(apiResults).every((s) => s === 401), apiResults);
+  }
+  const afterHostileLifetime = db.prepare("SELECT status FROM bookings WHERE id = ?").get(bookingA) as { status: string };
+  check("W1: rejected bad-lifetime tokens changed nothing on booking A", afterHostileLifetime.status === "Confirmed", afterHostileLifetime);
+  const svcAfterHostileLifetime = db.prepare("SELECT name FROM services WHERE id = 1").get() as { name: string };
+  check("W1: rejected bad-lifetime tokens left the service untouched", svcAfterHostileLifetime.name === "Facial", svcAfterHostileLifetime);
+  const staffAfterHostileLifetime = db.prepare("SELECT name FROM staff WHERE id = 1").get() as { name: string };
+  check("W1: rejected bad-lifetime tokens left staff untouched", staffAfterHostileLifetime.name === "Maya", staffAfterHostileLifetime);
+
+  // Positive control: exp - iat exactly at the TTL boundary still passes.
+  const boundaryToken = await signHostileAdminToken(w1Now + SESSION_TTL_SECONDS, w1Now);
+  const boundaryCookie = `${ADMIN_SESSION_COOKIE}=${boundaryToken}; ${cookieA}`;
+  check("W1 control: exp - iat exactly the TTL passes the page guard",
+    (await authorizeAdmin(jarOf(boundaryCookie))).status === "ok");
+  check("W1 control: exp - iat exactly the TTL passes middleware",
+    (await middleware(req("/admin", { cookie: boundaryCookie }))).headers.get("x-middleware-next") === "1");
 
   // Positive control: a normal, fully-claimed session still passes every guard.
   check("W2 control: normal session still passes middleware (page)",
@@ -456,13 +534,7 @@ async function main() {
   check("confirmation rule: legacy/seed row", !isOwnBooking({ visitor_id: null }, visitorA));
 
   // --- 9. Sign-out revokes server-side (D-015) ---------------------------
-  const allAdminApis = async (cookie: string) => ({
-    complete: (await completeRoute.POST(req(`/api/admin/bookings/${bookingA}/complete`, { method: "POST", cookie }), bookingParams(bookingA))).status,
-    noShow: (await noShowRoute.POST(req(`/api/admin/bookings/${bookingA}/no-show`, { method: "POST", cookie }), bookingParams(bookingA))).status,
-    servicesPost: (await servicesRoute.POST(req("/api/admin/services", { method: "POST", cookie, body: serviceBody }))).status,
-    servicePut: (await serviceRoute.PUT(req("/api/admin/services/1", { method: "PUT", cookie, body: serviceBody }), { params: Promise.resolve({ id: "1" }) })).status,
-    staffPut: (await staffRoute.PUT(req("/api/admin/staff/1", { method: "PUT", cookie, body: staffBody }), { params: Promise.resolve({ id: "1" }) })).status,
-  });
+  // allAdminApis is the shared helper defined in section 5.
   const revokedCount = () =>
     (db.prepare("SELECT COUNT(*) AS n FROM revoked_admin_sessions").get() as { n: number }).n;
   const payloadA = await verifyAdminSession(signA.token);

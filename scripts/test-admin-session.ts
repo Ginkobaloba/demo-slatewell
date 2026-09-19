@@ -19,6 +19,7 @@
 import { SignJWT } from "jose";
 import {
   ADMIN_SESSION_COOKIE,
+  SESSION_TTL_SECONDS,
   VISITOR_COOKIE,
   checkAdminCookies,
   isAdminConfigured,
@@ -147,6 +148,77 @@ async function main() {
     .setExpirationTime(now + 60)
     .sign(new TextEncoder().encode(SECRET));
   check("signed token with exp/iat/jti present accepted", (await verifyAdminSession(allThree)) !== null);
+
+  // --- W1 (#38 deep verify): requiredClaims checks presence, not value ---
+  // jose only validates iat's value when maxTokenAge is set (which the app
+  // now does), and never relates exp to iat at all. A holder of
+  // SESSION_SECRET could otherwise hand-sign an "accepted" token with any
+  // of the hostile shapes below.
+  // SignJWT's own setExpirationTime/setIssuedAt reject non-finite numbers,
+  // so a hostile (fractional, negative, far-future) exp/iat has to be
+  // assembled by hand, HS256-signed with the real secret: exactly what a
+  // holder of SESSION_SECRET could do.
+  async function signHostile(exp: unknown, iat: unknown): Promise<string> {
+    const header = Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT" })).toString("base64url");
+    const payload = Buffer.from(
+      JSON.stringify({ vid: VISITOR_A, src: "demo", role: "staff", sub: "demo-admin", jti: claimJti, exp, iat }),
+    ).toString("base64url");
+    const data = `${header}.${payload}`;
+    const key = await globalThis.crypto.subtle.importKey(
+      "raw",
+      new TextEncoder().encode(SECRET),
+      { name: "HMAC", hash: "SHA-256" },
+      false,
+      ["sign"],
+    );
+    const sig = Buffer.from(
+      await globalThis.crypto.subtle.sign("HMAC", key, new TextEncoder().encode(data)),
+    ).toString("base64url");
+    return `${data}.${sig}`;
+  }
+  const YEAR = 365 * 24 * 3600;
+
+  const expFarOut = await signHostile(now + 100 * YEAR, now);
+  check("W1: exp 100 years out (fresh iat) rejected", (await verifyAdminSession(expFarOut)) === null);
+
+  const iatInFuture = await signHostile(now + 3660, now + 3600);
+  check("W1: iat in the future rejected", (await verifyAdminSession(iatInFuture)) === null);
+
+  const iatAfterExpFuture = await signHostile(now + 60, now + 120);
+  check("W1: iat after exp, both in the future, rejected", (await verifyAdminSession(iatAfterExpFuture)) === null);
+
+  const iatAfterExpExpired = await signHostile(now - 30, now);
+  check("W1: iat after exp, already expired, rejected", (await verifyAdminSession(iatAfterExpExpired)) === null);
+
+  const iatEpoch = await signHostile(now + 60, 0);
+  check("W1: iat at the epoch (far in the past) rejected", (await verifyAdminSession(iatEpoch)) === null);
+
+  const iatNegative = await signHostile(now + 60, -1000);
+  check("W1: negative iat rejected", (await verifyAdminSession(iatNegative)) === null);
+
+  const fractionalExp = await signHostile(now + 60.5, now);
+  check("W1: fractional exp rejected", (await verifyAdminSession(fractionalExp)) === null);
+
+  const fractionalIat = await signHostile(now + 60, now - 0.5);
+  check("W1: fractional iat rejected", (await verifyAdminSession(fractionalIat)) === null);
+
+  const zeroLifetime = await signHostile(now, now);
+  check("W1: exp equal to iat (zero lifetime) rejected", (await verifyAdminSession(zeroLifetime)) === null);
+
+  const overTtl = await signHostile(now + SESSION_TTL_SECONDS + 1, now);
+  check("W1: exp - iat one second over the TTL rejected", (await verifyAdminSession(overTtl)) === null);
+
+  const atTtlBoundary = await signHostile(now + SESSION_TTL_SECONDS, now);
+  check("W1 control: exp - iat exactly the TTL accepted", (await verifyAdminSession(atTtlBoundary)) !== null);
+
+  const normalShapeAfterFix = await new SignJWT({ vid: VISITOR_A, src: "demo", role: "staff" })
+    .setProtectedHeader({ alg: "HS256" })
+    .setJti(randomId128())
+    .setSubject("demo-admin")
+    .setIssuedAt(now)
+    .setExpirationTime(now + 60)
+    .sign(new TextEncoder().encode(SECRET));
+  check("W1 control: an ordinary short-lived token is unaffected", (await verifyAdminSession(normalShapeAfterFix)) !== null);
 
   // --- signed visitor cookie (D-016) --------------------------------------
   const B64URL = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
