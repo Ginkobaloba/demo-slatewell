@@ -10,6 +10,7 @@
  * field, not an accordion of banks/wallets.
  */
 import { useEffect, useRef, useState } from "react";
+import type { Stripe } from "@stripe/stripe-js";
 import {
   CardElement,
   Elements,
@@ -57,12 +58,64 @@ const CARD_OPTIONS = {
 };
 
 export function DepositPaymentStep(props: StepProps) {
-  // Memoized per key inside getStripeClient, so this is the same promise on
-  // every render and Elements never re-initializes.
   const { publishableKey, ...formProps } = props;
-  const stripePromise = getStripeClient(publishableKey);
+  const { onBack } = formProps;
+  const [stripeClient, setStripeClient] = useState<Stripe | null>(null);
+  const [loadFailed, setLoadFailed] = useState(false);
+  const [retryCount, setRetryCount] = useState(0);
+
+  // getStripeClient() is memoized per key, so this resolves to the same
+  // client on every render -- Elements never re-initializes -- UNLESS the
+  // load previously failed: a failed load evicts its own cache entry (see
+  // stripe-client.ts / D-017), so bumping retryCount and re-running this
+  // effect re-attempts the import from scratch.
+  useEffect(() => {
+    let cancelled = false;
+    setLoadFailed(false);
+    getStripeClient(publishableKey)
+      .then((client) => {
+        if (!cancelled) setStripeClient(client);
+      })
+      .catch(() => {
+        if (!cancelled) setLoadFailed(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [publishableKey, retryCount]);
+
+  if (loadFailed) {
+    return (
+      <div className="space-y-4">
+        <p
+          role="alert"
+          className="rounded-md border border-terracotta/40 bg-accent px-3 py-2 text-sm text-accent-foreground"
+        >
+          We could not load the secure payment form. Check your connection
+          and try again.
+        </p>
+        <div className="flex flex-col gap-3 sm:flex-row-reverse">
+          <button
+            type="button"
+            onClick={() => setRetryCount((n) => n + 1)}
+            className="rounded-lg bg-slatewell px-6 py-3 font-medium text-warmwhite transition-colors hover:bg-slatewell/90 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring"
+          >
+            Retry
+          </button>
+          <button
+            type="button"
+            onClick={onBack}
+            className="rounded-lg border border-border bg-card px-6 py-3 text-center font-medium transition-colors hover:bg-muted"
+          >
+            Back
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <Elements stripe={stripePromise}>
+    <Elements stripe={stripeClient}>
       <DepositForm {...formProps} />
     </Elements>
   );

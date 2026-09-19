@@ -1,6 +1,6 @@
 "use client";
 
-import { loadStripe, type Stripe } from "@stripe/stripe-js";
+import type { Stripe } from "@stripe/stripe-js";
 
 /**
  * Browser-side Stripe.js loader. The TEST publishable key arrives as a prop
@@ -10,6 +10,28 @@ import { loadStripe, type Stripe } from "@stripe/stripe-js";
  * loadStripe is memoized per key so Elements never re-initializes across
  * wizard re-renders (the same key always returns the same promise). Returns
  * a promise of null when no key is given.
+ *
+ * Both the @stripe/stripe-js import and the js.stripe.com script tag it
+ * injects are deferred until this function is actually called with a key.
+ * DepositPaymentStep only mounts at the wizard's Payment step (booking-wizard
+ * imports it statically, so its module graph is otherwise always present in
+ * the /book bundle), so a request to js.stripe.com must not happen just from
+ * loading /book. Two things make that true here:
+ *   - `@stripe/stripe-js/pure` (unlike the default `@stripe/stripe-js` entry)
+ *     has no import-time side effect; the default entry schedules its own
+ *     script injection on a microtask right after the module evaluates,
+ *     independent of whether loadStripe() is ever invoked (see D-017).
+ *   - The import itself is dynamic, so the module (and Stripe's script tag)
+ *     is fetched only when a real publishable key reaches this function --
+ *     i.e., only when the card step actually mounts.
+ *
+ * The dynamic import, or the loadStripe() call it wraps, can reject (a
+ * network hiccup fetching the chunk, or js.stripe.com itself unreachable --
+ * see D-017). A rejected promise must not get stuck in the cache: the next
+ * call evicts it and re-attempts the import from scratch instead of
+ * replaying the same failure forever. The rejection itself is re-thrown, not
+ * swallowed, so the caller (DepositPaymentStep) decides how to show it
+ * instead of it becoming an uncaught rejection.
  */
 const cache = new Map<string, Promise<Stripe | null>>();
 const NO_STRIPE: Promise<Stripe | null> = Promise.resolve(null);
@@ -20,7 +42,12 @@ export function getStripeClient(
   if (!publishableKey) return NO_STRIPE;
   let promise = cache.get(publishableKey);
   if (!promise) {
-    promise = loadStripe(publishableKey);
+    promise = import("@stripe/stripe-js/pure")
+      .then(({ loadStripe }) => loadStripe(publishableKey))
+      .catch((err) => {
+        cache.delete(publishableKey);
+        throw err;
+      });
     cache.set(publishableKey, promise);
   }
   return promise;

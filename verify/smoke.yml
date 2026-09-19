@@ -55,3 +55,9 @@ surfaces:
     assertions:
       # POST-only endpoint; GET returns 405 Method Not Allowed
       - { type: http_status, expect: 405 }
+
+  - name: deposit-intent
+    url: /api/book/wave-wellness/deposit-intent
+    assertions:
+      # POST-only endpoint; GET returns 405 Method Not Allowed
+      - { type: http_status, expect: 405 }
