@@ -133,10 +133,11 @@ repo covers that shape, so the "1 and 10" mutation numbers understate what
   | test:stripe-config | pass | 29 passed, 0 failed |
   | test-cancellation, test-scheduling | pass | all PASS, exit 0 |
 
-- **Diff review:** `git diff --name-status origin/main...cacc3db` is exactly
-  the four stated files: `docs/decisions.md` (+83/-2, D-019 plus a two line
-  correction inside D-018), `scripts/test-admin-security.ts` (+100/-16),
-  `scripts/test-admin-session.ts` (+72), `src/lib/admin-session.ts` (+41).
+- **Diff review:** `git diff --numstat origin/main...cacc3db` is exactly the
+  four stated files: `docs/decisions.md` (+82/-1, the new D-019 section plus
+  one line inside D-018 replaced by two), `scripts/test-admin-security.ts`
+  (+94/-22), `scripts/test-admin-session.ts` (+72/-0),
+  `src/lib/admin-session.ts` (+41/-0).
   Nothing under `src/` outside `admin-session.ts`, nothing under `verify/`,
   no `package.json` or lockfile change, no workflow change. The source change
   is one `jwtVerify` option, one eleven line post-verify block and a comment.
