@@ -2,6 +2,14 @@
 
 Overall: PASS
 
+Tested-SHA: acb11548b8f96709bffc9fbb4309b2685cc9d66a
+
+(Added 2026-09-19 after the run, to meet the per-PR gate convention. The runtime
+matrix ran on the PR head above. #30 was squash-merged onto #29 as `4d19760`.
+`git patch-id --stable` of the merged change (`4253ee7..4d19760`) equals that of
+the tested change (`merge-base..acb1154`): `429b71c0`. The #29 tree it sits on
+(`4253ee7`) is byte-identical to the separately deep-verified #29 head `b01e073`.)
+
 Every claim PR #30 makes held with evidence:
 - the guard probe matched expectations on 10 of 10 values;
 - the runtime harness passed 238 of 238 (HTTP matrix 187, headless 51);
