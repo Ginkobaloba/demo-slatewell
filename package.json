@@ -3,7 +3,10 @@
   "version": "0.1.0",
   "private": true,
   "overrides": {
-    "glob@^10": "^10.5.0"
+    "glob@^10": "^10.5.0",
+    "next": {
+      "postcss": "^8.5.23"
+    }
   },
   "scripts": {
     "dev": "next dev",
