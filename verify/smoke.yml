@@ -27,18 +27,28 @@ surfaces:
       - { type: text_present, text: "Wave Wellness" }
       - { type: header_present, header: "Strict-Transport-Security" }
 
+  # --- Admin surfaces: public edge returns 404 (deliberate PII containment) ---
+  # Since 2026-09-18 the demo-proxy conf (cloudflare-config
+  # nginx/conf.d/slatewell.conf) answers `location ^~ /admin` and
+  # `location ^~ /api/admin` with 404 at the public edge, because the demo
+  # admin views exposed visitor-entered names, emails and phone numbers. The
+  # app itself is unchanged: at the origin, GET /api/admin/session is still
+  # 405 and an unauthenticated /admin still redirects to /?admin=required
+  # (see verify/assertions/admin-session.yml, which targets the app, not the
+  # edge).
+  #
+  # These checks assert the containment holds. When fix/signed-admin-visitor-scope
+  # (the "draughts and stripe" session) lands and reintroduces /admin behind
+  # signed sessions, update both checks again to the new public behavior.
   - name: admin-session-post
     url: /api/admin/session
     assertions:
-      # GET-only smoke harness; this POST-only route returns 405 to a GET.
-      # The 303 POST->/admin redirect is exercised in deep verify (browser layer).
-      - { type: http_status, expect: 405 }
+      - { type: http_status, expect: 404 }
 
   - name: admin-unauthenticated
     url: /admin
     assertions:
-      # Middleware redirects unauthenticated requests back to home
-      - { type: redirects_to, expect: "https://slatewell.projectnexuscode.org/?admin=required" }
+      - { type: http_status, expect: 404 }
 
   - name: portal-handoff-endpoint
     url: /api/auth/portal-handoff
