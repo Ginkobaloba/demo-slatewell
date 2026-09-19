@@ -15,7 +15,11 @@
     "test:stripe-config": "tsx scripts/test-stripe-config.ts",
     "test:portal-token": "tsx scripts/test-portal-token.ts",
     "test:portal-handoff": "tsx scripts/test-portal-handoff.ts",
-    "test:portal-session": "tsx scripts/test-portal-session.ts"
+    "test:admin-session": "tsx scripts/test-admin-session.ts",
+    "test:admin-security": "tsx scripts/test-admin-security.ts",
+    "test:admin-queries": "tsx scripts/test-admin-queries.ts",
+    "test:retention": "tsx scripts/test-retention.ts",
+    "e2e:visitor-scope": "node scripts/e2e-visitor-scope.mjs"
   },
   "dependencies": {
     "@base-ui/react": "^1.5.0",

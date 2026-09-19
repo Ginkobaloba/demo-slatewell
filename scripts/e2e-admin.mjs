@@ -1,7 +1,8 @@
 /**
  * Admin operator API e2e: proves the Schedule/Services/Staff actions work
- * and write to the SAME source of truth the customer flow reads. Auth is the
- * demo-admin cookie (presence is sufficient, D-010).
+ * and write to the SAME source of truth the customer flow reads. Auth is a
+ * signed, visitor-bound session from POST /api/admin/session (D-014); the
+ * server needs SESSION_SECRET set.
  *
  * Prereqs: dev/prod server on BASE_URL (default http://localhost:3000),
  * freshly seeded database. Usage: node scripts/e2e-admin.mjs
@@ -15,7 +16,18 @@ import { fileURLToPath } from "url";
 const BASE_URL = process.env.BASE_URL ?? "http://localhost:3000";
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const DB_PATH = path.join(ROOT, "data", "slatewell.db");
-const COOKIE = "slatewell_admin_session=demo-admin";
+// Sign in the way the demo button does and keep both cookies it sets.
+async function signIn() {
+  const res = await fetch(`${BASE_URL}/api/admin/session`, {
+    method: "POST",
+    redirect: "manual",
+  });
+  return res.headers
+    .getSetCookie()
+    .map((line) => line.split(";")[0])
+    .join("; ");
+}
+const COOKIE = await signIn();
 
 let failures = 0;
 const check = (name, ok, detail = "") => {
@@ -42,6 +54,17 @@ async function api(method, pathname, body, withCookie = true) {
 // --- auth gate --------------------------------------------------------------
 const unauth = await api("POST", "/api/admin/services", {}, false);
 check("admin route rejects no cookie (401)", unauth.status === 401, String(unauth.status));
+{
+  const res = await fetch(`${BASE_URL}/api/admin/services`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Cookie: "slatewell_admin_session=demo-admin",
+    },
+    body: "{}",
+  });
+  check("admin route rejects a forged cookie (401)", res.status === 401, String(res.status));
+}
 
 // --- Schedule: complete + no-show settle the deposit ------------------------
 {

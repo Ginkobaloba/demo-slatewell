@@ -6,6 +6,8 @@
  * here; routes/pages call these typed functions.
  */
 import { getDb } from "@/lib/db";
+import { transitionScopedBooking, type AdminBookingUpdate } from "@/lib/repo";
+import { visibleToVisitorSql } from "@/lib/scope";
 import type { Booking, Service, Staff } from "@/lib/types";
 
 // ---------------------------------------------------------------------------
@@ -30,10 +32,14 @@ export interface ScheduleRow {
   notes: string | null;
 }
 
-/** All non-cancelled appointments for a day, ordered by start time. */
+/**
+ * All non-cancelled appointments for a day that the caller may see (seed
+ * rows plus the caller's own bookings, D-014), ordered by start time.
+ */
 export function getScheduleForDate(
   businessId: number,
   date: string,
+  visitorId: string,
 ): ScheduleRow[] {
   return getDb()
     .prepare(
@@ -51,32 +57,27 @@ export function getScheduleForDate(
        WHERE bk.business_id = ?
          AND bk.start_at >= ? AND bk.start_at < ?
          AND bk.status != 'Cancelled'
+         AND ${visibleToVisitorSql("bk")}
        ORDER BY bk.start_at, st.sort_order`,
     )
-    .all(businessId, `${date}T00:00`, `${date}T24:00`) as ScheduleRow[];
+    .all(
+      businessId,
+      `${date}T00:00`,
+      `${date}T24:00`,
+      visitorId,
+    ) as ScheduleRow[];
 }
 
 /**
- * Mark a Confirmed booking Completed. A held deposit is captured (it is
- * applied to the visit total, D-009). Returns the updated booking, or
- * undefined if it was not Confirmed. The route performs the Stripe capture.
+ * Mark a Confirmed booking in the caller's scope Completed. A held deposit
+ * is captured (it is applied to the visit total, D-009). The route performs
+ * the Stripe capture.
  */
-export function markCompleted(bookingId: string): Booking | undefined {
-  const db = getDb();
-  const booking = db
-    .prepare("SELECT * FROM bookings WHERE id = ?")
-    .get(bookingId) as Booking | undefined;
-  if (!booking || booking.status !== "Confirmed") return undefined;
-  db.prepare(
-    `UPDATE bookings
-       SET status = 'Completed',
-           deposit_status = CASE WHEN deposit_status = 'Held'
-             THEN 'Captured' ELSE deposit_status END
-     WHERE id = ?`,
-  ).run(bookingId);
-  return db
-    .prepare("SELECT * FROM bookings WHERE id = ?")
-    .get(bookingId) as Booking;
+export function markCompleted(
+  bookingId: string,
+  visitorId: string,
+): AdminBookingUpdate {
+  return transitionScopedBooking(bookingId, visitorId, "Completed");
 }
 
 // ---------------------------------------------------------------------------

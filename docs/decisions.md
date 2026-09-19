@@ -196,3 +196,59 @@ Payment step that could not render.
   treated as absent.
 - **Verification.** `npm run test:stripe-config` covers the predicate
   matrix, fallback order, and per-key memoization.
+
+## D-014: Signed admin sessions and per-browser demo scope (2026-09-18)
+
+Supersedes the authorization part of D-010. The admin area was gated only
+by the NAME of the `slatewell_admin_session` cookie, so anyone could set it
+by hand, and the one-click sign-in handed it to every visitor. Any visitor
+could then read the names, emails, and phone numbers other visitors typed
+into the booking form. Decisions:
+
+- **Signed session.** The cookie is an HS256 JWT (HMAC-SHA-256 keyed by
+  `SESSION_SECRET`) over a random 128-bit session id (`jti`) and the
+  visitor id (`vid`) it was issued to. `src/lib/admin-session.ts` is
+  Edge-safe (jose + Web Crypto), so the middleware and the Node handlers
+  run the identical check (`checkAdminCookies`).
+- **Middleware is not the only gate.** Every admin API handler calls
+  `requireAdminApi`, and every admin page and the admin layout call
+  `requireAdminPage`. A matcher mistake still fails closed.
+- **Fail closed.** No `SESSION_SECRET`, one under 32 characters, or the
+  published `.env.example` placeholder means the admin area, the sign-in
+  endpoint, and the Portal handoff answer 404. So does a value that looks
+  like a mangled env line: internal whitespace, a path fragment (drive
+  letter + `:\`, `_secrets`, `.local.txt`), or a leading `generated `.
+  Surrounding whitespace is trimmed first. Each failing rule is logged once
+  by name, never the value. There is no dev fallback secret on purpose.
+- **Demo value kept, scope narrowed.** "Sign in as demo admin" still works
+  without credentials, but the session is bound to the browser's HttpOnly
+  `slatewell_visitor` cookie (random 128-bit, SameSite=Lax, Secure in
+  production). A session copied into another browser is rejected.
+- **Per-browser data scope.** Bookings carry `visitor_id` and `seeded`.
+  Admin views and aggregates show seed rows plus the caller's own bookings;
+  complete/no-show on anything else is a 404 (indistinguishable from an
+  unknown id). Customers created from the booking form are tagged too, and
+  `findOrCreateCustomer` only matches within the same browser, so typing
+  someone else's email never attaches to their row.
+- **Public detail pages.** Confirmation and `.ics` require the booking's own
+  visitor cookie (booking ids are short enough to guess, and both pages
+  expose the cancel token). The cancel page and API keep their existing
+  128-bit `cancel_token` check (D-007); that token is the unguessable link.
+- **Portal handoff does not widen access.** It still verifies the Portal
+  RS256 token, then mints the same visitor-bound session with the same
+  scope.
+- **Retention.** Visitor-created bookings, their mock messages, and orphaned
+  visitor customers are deleted 24 hours after creation
+  (`src/lib/retention.ts`), on database open and at most hourly after.
+- **Legacy rows.** A database created before D-014 is upgraded in place;
+  all of its existing rows (old seed rows included, since they cannot be
+  told apart reliably) get `seeded = 0` and no visitor id, so they are
+  hidden from every session and the purge leaves them alone. Deleting them
+  is a separate, approved one-time step; `npm run db:seed` restores the demo
+  data. The image build seeds a fresh database, which marks seed bookings
+  `seeded = 1`.
+- **Booking form notice.** The details step says "This is a demo. Please
+  don't enter real personal details."
+- **Verification.** `test:admin-session`, `test:admin-security`,
+  `test:admin-queries`, `test:retention`, `test:portal-handoff`, and the
+  two-browser `e2e:visitor-scope` against `next start`.

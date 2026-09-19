@@ -8,6 +8,7 @@ import {
   SlotTakenError,
 } from "@/lib/repo";
 import { releaseDeposit, verifyDepositIntent } from "@/lib/deposits";
+import { resolveVisitorId, setVisitorCookie } from "@/lib/visitor";
 import { isDepositCardFlowEnabled } from "@/lib/stripe";
 
 export const dynamic = "force-dynamic";
@@ -86,6 +87,11 @@ export async function POST(req: NextRequest, props: { params: Promise<{ slug: st
     verifiedPaymentIntentId = piId;
   }
 
+  // D-014: tag the booking with this browser's visitor id (minted on the
+  // first booking) so only this browser can see it in the confirmation page,
+  // the .ics download, and the demo admin views.
+  const { visitorId, isNew } = resolveVisitorId(req.cookies);
+
   try {
     const booking = createBooking({
       business,
@@ -96,8 +102,11 @@ export async function POST(req: NextRequest, props: { params: Promise<{ slug: st
       customer: parsed.data.customer,
       notes: parsed.data.notes,
       paymentIntentId: verifiedPaymentIntentId,
+      visitorId,
     });
-    return NextResponse.json({ id: booking.id }, { status: 201 });
+    const res = NextResponse.json({ id: booking.id }, { status: 201 });
+    if (isNew) setVisitorCookie(res, visitorId);
+    return res;
   } catch (err) {
     if (err instanceof SlotTakenError) {
       // Free the authorized hold so the customer's card is not left blocked.

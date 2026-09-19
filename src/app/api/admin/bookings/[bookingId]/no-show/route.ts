@@ -2,31 +2,34 @@ import { NextRequest, NextResponse } from "next/server";
 import { markNoShow } from "@/lib/repo";
 import { captureDeposit, isRealPaymentIntent } from "@/lib/deposits";
 import { isStripeConfigured } from "@/lib/stripe";
+import { requireAdminApi } from "@/lib/admin-auth";
 
 export const dynamic = "force-dynamic";
-
-const ADMIN_COOKIE = "slatewell_admin_session";
 
 /**
  * POST /api/admin/bookings/[bookingId]/no-show
  *
  * Admin-only. Marks a confirmed booking as a no-show and captures its held
- * deposit (the late-cancellation/no-show side of the policy). Gated by the
- * demo admin cookie.
+ * deposit (the late-cancellation/no-show side of the policy). Requires a
+ * signed admin session, and only acts on seed bookings or the session's own
+ * browser's bookings; anything else is a 404 (D-014).
  */
 export async function POST(req: NextRequest, props: { params: Promise<{ bookingId: string }> }) {
   const params = await props.params;
-  if (!req.cookies.has(ADMIN_COOKIE)) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const auth = await requireAdminApi(req);
+  if (!auth.ok) return auth.response;
 
-  const booking = markNoShow(params.bookingId);
-  if (!booking) {
+  const result = markNoShow(params.bookingId, auth.visitorId);
+  if (result.kind === "not_found") {
+    return NextResponse.json({ error: "Booking not found" }, { status: 404 });
+  }
+  if (result.kind === "not_confirmed") {
     return NextResponse.json(
       { error: "Only a confirmed booking can be marked a no-show" },
       { status: 409 },
     );
   }
+  const { booking } = result;
 
   if (
     isStripeConfigured() &&

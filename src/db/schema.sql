@@ -83,7 +83,10 @@ CREATE TABLE IF NOT EXISTS customers (
   phone TEXT,
   notes TEXT,
   tags TEXT NOT NULL DEFAULT '[]',  -- JSON array of strings
-  created_at TEXT NOT NULL
+  created_at TEXT NOT NULL,
+  -- Per-browser demo scope (D-014). NULL for seed customers; set to the
+  -- creating browser's visitor id for customers entered on the booking form.
+  visitor_id TEXT
 );
 
 CREATE TABLE IF NOT EXISTS bookings (
@@ -103,12 +106,21 @@ CREATE TABLE IF NOT EXISTS bookings (
   notes TEXT,
   created_at TEXT NOT NULL,
   cancelled_at TEXT,
-  cancellation_reason TEXT
+  cancellation_reason TEXT,
+  -- Per-browser demo scope (D-014). seeded = 1 marks fictional seed rows,
+  -- visible to every admin session. Visitor-created rows carry the creating
+  -- browser's visitor id and are visible only to that browser; they expire
+  -- after 24 hours. Rows with seeded = 0 and no visitor id (created before
+  -- D-014) are hidden from everyone and left for a separate, approved purge.
+  visitor_id TEXT,
+  seeded INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE INDEX IF NOT EXISTS idx_bookings_start ON bookings(business_id, start_at);
 CREATE INDEX IF NOT EXISTS idx_bookings_staff ON bookings(staff_id, start_at);
 CREATE INDEX IF NOT EXISTS idx_bookings_customer ON bookings(customer_id, start_at);
+CREATE INDEX IF NOT EXISTS idx_bookings_visitor ON bookings(visitor_id);
+CREATE INDEX IF NOT EXISTS idx_customers_visitor ON customers(visitor_id);
 
 -- Mock outbound messages. Nothing is actually sent; rows accumulate in
 -- the /admin/communications log.

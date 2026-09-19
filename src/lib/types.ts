@@ -50,6 +50,8 @@ export interface Customer {
   notes: string | null;
   tags: string;
   created_at: string;
+  /** D-014: creating browser's visitor id; null for seed customers. */
+  visitor_id: string | null;
 }
 
 export type BookingStatus = "Confirmed" | "Cancelled" | "Completed" | "No-Show";
@@ -73,4 +75,8 @@ export interface Booking {
   created_at: string;
   cancelled_at: string | null;
   cancellation_reason: string | null;
+  /** D-014: creating browser's visitor id; null for seed and legacy rows. */
+  visitor_id: string | null;
+  /** D-014: 1 for fictional seed rows, 0 otherwise. */
+  seeded: number;
 }

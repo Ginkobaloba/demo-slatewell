@@ -6,7 +6,7 @@ import {
   updateStaff,
 } from "@/lib/admin-repo";
 import { getBusinessBySlug } from "@/lib/repo";
-import { isAdmin } from "@/lib/admin-auth";
+import { requireAdminApi } from "@/lib/admin-auth";
 
 export const dynamic = "force-dynamic";
 
@@ -37,9 +37,8 @@ const bodySchema = z.object({
  */
 export async function PUT(req: NextRequest, props: { params: Promise<{ id: string }> }) {
   const params = await props.params;
-  if (!isAdmin(req)) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const auth = await requireAdminApi(req);
+  if (!auth.ok) return auth.response;
   const staffId = Number(params.id);
   if (!Number.isInteger(staffId) || staffId <= 0) {
     return NextResponse.json({ error: "Invalid id" }, { status: 400 });

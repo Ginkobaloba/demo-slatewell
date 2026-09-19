@@ -1,6 +1,10 @@
 import Database from "better-sqlite3";
 import path from "path";
 import fs from "fs";
+import {
+  ensureVisitorScopeColumns,
+  maybePurgeExpiredVisitorData,
+} from "@/lib/retention";
 
 const DB_PATH =
   process.env.SLATEWELL_DB_PATH ??
@@ -14,19 +18,24 @@ declare global {
 /**
  * Singleton SQLite handle, cached on globalThis so Next.js dev-mode HMR
  * does not leak file handles by re-opening on every reload.
+ *
+ * On first open it applies the D-014 schema upgrade; on every call it gives
+ * the visitor-data expiry a chance to run (itself throttled to hourly).
  */
 export function getDb(): Database.Database {
-  if (globalThis.__slatewellDb) return globalThis.__slatewellDb;
-
-  if (!fs.existsSync(DB_PATH)) {
-    throw new Error(
-      `Slatewell database not found at ${DB_PATH}. Run "npm run db:seed" first.`
-    );
+  let db = globalThis.__slatewellDb;
+  if (!db) {
+    if (!fs.existsSync(DB_PATH)) {
+      throw new Error(
+        `Slatewell database not found at ${DB_PATH}. Run "npm run db:seed" first.`
+      );
+    }
+    db = new Database(DB_PATH);
+    db.pragma("journal_mode = WAL");
+    db.pragma("foreign_keys = ON");
+    ensureVisitorScopeColumns(db);
+    globalThis.__slatewellDb = db;
   }
-
-  const db = new Database(DB_PATH);
-  db.pragma("journal_mode = WAL");
-  db.pragma("foreign_keys = ON");
-  globalThis.__slatewellDb = db;
+  maybePurgeExpiredVisitorData(db);
   return db;
 }

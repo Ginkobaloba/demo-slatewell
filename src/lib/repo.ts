@@ -9,6 +9,7 @@ import {
   decideCancellation,
   type CancellationDecision,
 } from "@/lib/cancellation";
+import { visibleToVisitorSql } from "@/lib/scope";
 import {
   computeSlots,
   hhmmToMinutes,
@@ -140,27 +141,35 @@ export function getOpenSlots(opts: {
 
 // --- customers ----------------------------------------------------------------
 
-/** Match an existing customer by email (preferred) or phone; else create. */
+/**
+ * Match an existing customer by email (preferred) or phone; else create.
+ *
+ * D-014: matching is confined to customers created by the same browser
+ * (visitor id). Typing someone else's email must never attach a booking to
+ * their customer row, or the confirmation page would show their name.
+ */
 export function findOrCreateCustomer(
   businessId: number,
-  input: { firstName: string; lastName: string; email: string; phone: string }
+  input: { firstName: string; lastName: string; email: string; phone: string },
+  visitorId: string
 ): Customer {
   const db = getDb();
   const existing = db
     .prepare(
       `SELECT * FROM customers
-       WHERE business_id = ? AND (lower(email) = lower(?) OR phone = ?)
+       WHERE business_id = ? AND visitor_id = ?
+         AND (lower(email) = lower(?) OR phone = ?)
        ORDER BY (lower(email) = lower(?)) DESC LIMIT 1`
     )
-    .get(businessId, input.email, input.phone, input.email) as
+    .get(businessId, visitorId, input.email, input.phone, input.email) as
     | Customer
     | undefined;
   if (existing) return existing;
 
   const result = db
     .prepare(
-      `INSERT INTO customers (business_id, first_name, last_name, email, phone, tags, created_at)
-       VALUES (?, ?, ?, ?, ?, '["new"]', ?)`
+      `INSERT INTO customers (business_id, first_name, last_name, email, phone, tags, created_at, visitor_id)
+       VALUES (?, ?, ?, ?, ?, '["new"]', ?, ?)`
     )
     .run(
       businessId,
@@ -168,7 +177,8 @@ export function findOrCreateCustomer(
       input.lastName,
       input.email,
       input.phone,
-      localNowIso()
+      localNowIso(),
+      visitorId
     );
   return db
     .prepare("SELECT * FROM customers WHERE id = ?")
@@ -202,6 +212,8 @@ export function createBooking(opts: {
   customer: { firstName: string; lastName: string; email: string; phone: string };
   notes?: string;
   paymentIntentId?: string | null;
+  /** D-014: the creating browser's visitor id; scopes who can see it. */
+  visitorId: string;
 }): Booking {
   const db = getDb();
   const tx = db.transaction((): Booking => {
@@ -215,7 +227,11 @@ export function createBooking(opts: {
       throw new SlotTakenError();
     }
 
-    const customer = findOrCreateCustomer(opts.business.id, opts.customer);
+    const customer = findOrCreateCustomer(
+      opts.business.id,
+      opts.customer,
+      opts.visitorId
+    );
     const id = `bk_${randomBytes(8).toString("hex").slice(0, 10)}`;
     const startAt = `${opts.date}T${opts.time}`;
     const startMin = hhmmToMinutes(opts.time);
@@ -226,8 +242,9 @@ export function createBooking(opts: {
     db.prepare(
       `INSERT INTO bookings (id, business_id, customer_id, service_id, staff_id,
          start_at, end_at, status, price_cents, deposit_cents, deposit_status,
-         stripe_payment_intent_id, cancel_token, notes, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 'Confirmed', ?, ?, ?, ?, ?, ?, ?)`
+         stripe_payment_intent_id, cancel_token, notes, created_at,
+         visitor_id, seeded)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'Confirmed', ?, ?, ?, ?, ?, ?, ?, ?, 0)`
     ).run(
       id,
       opts.business.id,
@@ -245,7 +262,8 @@ export function createBooking(opts: {
       hasDeposit ? opts.paymentIntentId ?? null : null,
       randomBytes(16).toString("hex"),
       opts.notes ?? null,
-      createdAt
+      createdAt,
+      opts.visitorId
     );
 
     logBookingConfirmation(id, customer, opts, createdAt);
@@ -521,24 +539,57 @@ export function voidBookingForFailedDeposit(bookingId: string): void {
 }
 
 /**
+ * Outcome of an admin status change. "not_found" covers both a missing id
+ * and a booking outside the caller's visitor scope (D-014), so a route can
+ * answer 404 without revealing that another browser's booking exists.
+ */
+export type AdminBookingUpdate =
+  | { kind: "ok"; booking: Booking }
+  | { kind: "not_found" }
+  | { kind: "not_confirmed" };
+
+/**
+ * Move a Confirmed booking in the caller's scope to `status`, capturing a
+ * held deposit (D-009). Shared by the no-show and complete admin actions.
+ */
+export function transitionScopedBooking(
+  bookingId: string,
+  visitorId: string,
+  status: "No-Show" | "Completed"
+): AdminBookingUpdate {
+  const db = getDb();
+  const tx = db.transaction((): AdminBookingUpdate => {
+    const booking = db
+      .prepare(
+        `SELECT * FROM bookings bk WHERE bk.id = ? AND ${visibleToVisitorSql("bk")}`
+      )
+      .get(bookingId, visitorId) as Booking | undefined;
+    if (!booking) return { kind: "not_found" };
+    if (booking.status !== "Confirmed") return { kind: "not_confirmed" };
+    db.prepare(
+      `UPDATE bookings
+         SET status = ?,
+             deposit_status = CASE WHEN deposit_status = 'Held'
+               THEN 'Captured' ELSE deposit_status END
+       WHERE id = ?`
+    ).run(status, bookingId);
+    return {
+      kind: "ok",
+      booking: db
+        .prepare("SELECT * FROM bookings WHERE id = ?")
+        .get(bookingId) as Booking,
+    };
+  });
+  return tx();
+}
+
+/**
  * Mark a confirmed booking as a no-show and flag its held deposit for capture.
  * The admin route performs the Stripe capture; this records the local state.
- * Returns the updated booking, or undefined if it was not Confirmed.
  */
-export function markNoShow(bookingId: string): Booking | undefined {
-  const db = getDb();
-  const booking = db
-    .prepare("SELECT * FROM bookings WHERE id = ?")
-    .get(bookingId) as Booking | undefined;
-  if (!booking || booking.status !== "Confirmed") return undefined;
-  db.prepare(
-    `UPDATE bookings
-       SET status = 'No-Show',
-           deposit_status = CASE WHEN deposit_status = 'Held'
-             THEN 'Captured' ELSE deposit_status END
-     WHERE id = ?`
-  ).run(bookingId);
-  return db
-    .prepare("SELECT * FROM bookings WHERE id = ?")
-    .get(bookingId) as Booking;
+export function markNoShow(
+  bookingId: string,
+  visitorId: string
+): AdminBookingUpdate {
+  return transitionScopedBooking(bookingId, visitorId, "No-Show");
 }

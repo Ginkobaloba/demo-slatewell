@@ -363,6 +363,13 @@ export function BookingWizard({
               goTo(4);
             }}
           >
+            <p
+              role="note"
+              data-testid="demo-data-notice"
+              className="rounded-lg border border-border bg-secondary/40 px-3 py-2 text-sm text-foreground"
+            >
+              This is a demo. Please don&apos;t enter real personal details.
+            </p>
             <div className="grid gap-4 sm:grid-cols-2">
               <Field
                 label="First name"

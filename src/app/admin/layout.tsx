@@ -3,8 +3,17 @@ import Link from "next/link";
 import { LogOut } from "lucide-react";
 import { SlatewellLogo } from "@/components/slatewell-logo";
 import { AdminNav } from "@/components/admin/admin-nav";
+import { requireAdminPage } from "@/lib/admin-auth";
 
-export default function AdminLayout({ children }: { children: ReactNode }) {
+// Every admin render re-verifies the signed session (D-014).
+export const dynamic = "force-dynamic";
+
+export default async function AdminLayout({
+  children,
+}: {
+  children: ReactNode;
+}) {
+  await requireAdminPage();
   return (
     <div className="flex min-h-screen">
       {/* Sidebar */}

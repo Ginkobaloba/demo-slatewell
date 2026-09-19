@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createService } from "@/lib/admin-repo";
 import { getBusinessBySlug } from "@/lib/repo";
-import { isAdmin } from "@/lib/admin-auth";
+import { requireAdminApi } from "@/lib/admin-auth";
 import { serviceSchema } from "@/lib/service-schema";
 
 export const dynamic = "force-dynamic";
@@ -10,9 +10,8 @@ const BUSINESS_SLUG = "wave-wellness";
 
 /** POST /api/admin/services -- create a service. Admin-only. */
 export async function POST(req: NextRequest) {
-  if (!isAdmin(req)) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const auth = await requireAdminApi(req);
+  if (!auth.ok) return auth.response;
   const parsed = serviceSchema.safeParse(await req.json().catch(() => null));
   if (!parsed.success) {
     return NextResponse.json(

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { updateService } from "@/lib/admin-repo";
 import { getBusinessBySlug } from "@/lib/repo";
-import { isAdmin } from "@/lib/admin-auth";
+import { requireAdminApi } from "@/lib/admin-auth";
 import { serviceSchema } from "@/lib/service-schema";
 
 export const dynamic = "force-dynamic";
@@ -11,9 +11,8 @@ const BUSINESS_SLUG = "wave-wellness";
 /** PUT /api/admin/services/[id] -- update a service. Admin-only. */
 export async function PUT(req: NextRequest, props: { params: Promise<{ id: string }> }) {
   const params = await props.params;
-  if (!isAdmin(req)) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const auth = await requireAdminApi(req);
+  if (!auth.ok) return auth.response;
   const id = Number(params.id);
   if (!Number.isInteger(id) || id <= 0) {
     return NextResponse.json({ error: "Invalid id" }, { status: 400 });
