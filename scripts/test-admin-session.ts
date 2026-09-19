@@ -6,7 +6,9 @@
  *
  * Covers mint/verify round trip, tamper and wrong-secret rejection, expiry,
  * the visitor binding, the forged "right name, no signature" cookie, and the
- * fail-closed secret rules (missing, short, published placeholder).
+ * fail-closed secret rules (missing, short, published placeholder, and the
+ * mangled-env-line rules: whitespace, path fragments, "generated " prefix,
+ * logged by rule name without the value).
  * Exits nonzero on any failure.
  */
 import { SignJWT } from "jose";
@@ -18,8 +20,10 @@ import {
   isValidVisitorId,
   mintAdminSession,
   randomId128,
+  sessionSecretProblem,
   verifyAdminSession,
   type CookieReader,
+  type SecretProblem,
 } from "../src/lib/admin-session";
 
 const failures: string[] = [];
@@ -130,6 +134,66 @@ async function main() {
   check("published .env.example placeholder -> not configured", !isAdminConfigured());
   process.env.SESSION_SECRET = SECRET;
   check("real secret -> configured", isAdminConfigured());
+
+  // --- mangled env lines (shape rules) -------------------------------------
+  const good = "0123456789abcdef".repeat(4); // 64 hex chars
+  const shapeCases: Array<[string, string, SecretProblem | null]> = [
+    ["bare 64-hex value", good, null],
+    ["surrounding CR/LF is trimmed, not a failure", `${good}\r\n`, null],
+    ["internal space", `${good.slice(0, 32)} ${good.slice(32)}`, "contains_whitespace"],
+    ["internal tab", `${good.slice(0, 32)}\t${good.slice(32)}`, "contains_whitespace"],
+    ["internal newline", `${good.slice(0, 32)}\n${good.slice(32)}`, "contains_whitespace"],
+    ["drive path fragment", `C:\\${good}`, "contains_path"],
+    ["lowercase drive path fragment", `${good}d:\\x`, "contains_path"],
+    ["_secrets fragment", `${good}_secrets`, "contains_path"],
+    [".local.txt fragment", `${good}.local.txt`, "contains_path"],
+    ["starts with 'generated '", `generated ${good}`, "generated_prefix"],
+    [
+      "the observed mangled line shape (note + path + value)",
+      `generated C:\\Users\\someone\\_secrets\\session.local.txt ${good}`,
+      "generated_prefix",
+    ],
+    ["missing", "", "missing"],
+    ["too short", "abc123", "too_short"],
+    ["placeholder", "replace-with-a-real-32-plus-char-random-secret", "placeholder"],
+  ];
+  for (const [label, value, expected] of shapeCases) {
+    check(`secret rule: ${label}`, sessionSecretProblem(value) === expected, sessionSecretProblem(value));
+  }
+
+  // A mangled secret disables the admin area end to end and logs the rule
+  // name, never the value.
+  const warnings: string[] = [];
+  const originalWarn = console.warn;
+  console.warn = (...args: unknown[]) => warnings.push(args.map(String).join(" "));
+  try {
+    const mangled = `generated C:\\Users\\someone\\_secrets\\session.local.txt ${good}`;
+    process.env.SESSION_SECRET = mangled;
+    check("mangled secret -> not configured", !isAdminConfigured());
+    check(
+      "mangled secret -> checkAdminCookies unconfigured (404 path)",
+      (await checkAdminCookies(jar({ [ADMIN_SESSION_COOKIE]: token, [VISITOR_COOKIE]: VISITOR_A }))).status === "unconfigured",
+    );
+    for (const [value, rule] of [
+      [`${good} ${good}`, "whitespace"],
+      [`${good}_secrets`, "file path"],
+    ] as const) {
+      process.env.SESSION_SECRET = value;
+      check(`${rule} secret -> not configured`, !isAdminConfigured());
+    }
+    const all = warnings.join("\n");
+    check("warning names the generated-prefix rule", all.includes('starts with "generated "'), warnings);
+    check("warning names the whitespace rule", all.includes("contains whitespace"), warnings);
+    check("warning names the path rule", all.includes("file path fragment"), warnings);
+    check("warnings never contain the secret value", !all.includes(good), warnings);
+    const before = warnings.length;
+    process.env.SESSION_SECRET = mangled;
+    isAdminConfigured();
+    check("each rule warns once, not per request", warnings.length === before, warnings.length);
+  } finally {
+    console.warn = originalWarn;
+    process.env.SESSION_SECRET = SECRET;
+  }
 
   console.log(`admin-session: ${passed} passed, ${failures.length} failed`);
   if (failures.length) {

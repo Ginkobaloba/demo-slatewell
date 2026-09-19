@@ -215,8 +215,11 @@ into the booking form. Decisions:
   `requireAdminPage`. A matcher mistake still fails closed.
 - **Fail closed.** No `SESSION_SECRET`, one under 32 characters, or the
   published `.env.example` placeholder means the admin area, the sign-in
-  endpoint, and the Portal handoff answer 404. There is no dev fallback
-  secret on purpose.
+  endpoint, and the Portal handoff answer 404. So does a value that looks
+  like a mangled env line: internal whitespace, a path fragment (drive
+  letter + `:\`, `_secrets`, `.local.txt`), or a leading `generated `.
+  Surrounding whitespace is trimmed first. Each failing rule is logged once
+  by name, never the value. There is no dev fallback secret on purpose.
 - **Demo value kept, scope narrowed.** "Sign in as demo admin" still works
   without credentials, but the session is bound to the browser's HttpOnly
   `slatewell_visitor` cookie (random 128-bit, SameSite=Lax, Secure in

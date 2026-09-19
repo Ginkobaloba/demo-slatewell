@@ -46,15 +46,76 @@ export interface AdminSessionPayload extends JWTPayload {
 }
 
 /**
- * The signing key, or null when the secret is missing, too short, or the
- * published placeholder. Null means "admin area disabled".
+ * Why a SESSION_SECRET value is unusable, or null when it is fine. Checked on
+ * the value with surrounding whitespace trimmed (env files often end lines
+ * with CR/LF). The shape rules catch a mangled env line, such as a note or a
+ * file path pasted in front of the real value, which would otherwise still
+ * pass the length check and sign sessions with a guessable string.
+ */
+export type SecretProblem =
+  | "missing"
+  | "too_short"
+  | "placeholder"
+  | "contains_whitespace"
+  | "contains_path"
+  | "generated_prefix";
+
+const SECRET_PROBLEM_MESSAGES: Record<SecretProblem, string> = {
+  missing: "SESSION_SECRET is not set",
+  too_short: `SESSION_SECRET is shorter than ${MIN_SECRET_LENGTH} characters`,
+  placeholder: "SESSION_SECRET is still the published .env.example placeholder",
+  contains_whitespace:
+    "SESSION_SECRET contains whitespace (the env line looks mangled; expect one bare random value)",
+  contains_path:
+    "SESSION_SECRET contains a file path fragment (drive letter, _secrets, or .local.txt); the env line looks mangled",
+  generated_prefix:
+    'SESSION_SECRET starts with "generated "; the env line holds a note, not just the value',
+};
+
+/** A Windows drive path fragment such as `C:\`. */
+const DRIVE_PATH_RE = /[A-Za-z]:\\/;
+
+export function sessionSecretProblem(
+  value: string | undefined,
+): SecretProblem | null {
+  const raw = value?.trim();
+  if (!raw) return "missing";
+  // Shape rules first: a mangled line is the more useful diagnosis even when
+  // it also happens to be short.
+  if (raw.toLowerCase().startsWith("generated ")) return "generated_prefix";
+  if (
+    DRIVE_PATH_RE.test(raw) ||
+    raw.includes("_secrets") ||
+    raw.toLowerCase().includes(".local.txt")
+  ) {
+    return "contains_path";
+  }
+  if (/\s/.test(raw)) return "contains_whitespace";
+  if (raw.length < MIN_SECRET_LENGTH) return "too_short";
+  if (PLACEHOLDER_SECRETS.has(raw)) return "placeholder";
+  return null;
+}
+
+const warnedProblems = new Set<SecretProblem>();
+
+/**
+ * The signing key, or null when the secret fails any rule above. Null means
+ * "admin area disabled" (404 everywhere). Each failing rule is logged once
+ * per process, naming the rule and never the value.
  */
 export function getSessionSecret(): Uint8Array | null {
-  const raw = process.env.SESSION_SECRET?.trim();
-  if (!raw || raw.length < MIN_SECRET_LENGTH || PLACEHOLDER_SECRETS.has(raw)) {
+  const value = process.env.SESSION_SECRET;
+  const problem = sessionSecretProblem(value);
+  if (problem) {
+    if (!warnedProblems.has(problem)) {
+      warnedProblems.add(problem);
+      console.warn(
+        `[admin-session] Admin area disabled (404): ${SECRET_PROBLEM_MESSAGES[problem]}.`,
+      );
+    }
     return null;
   }
-  return new TextEncoder().encode(raw);
+  return new TextEncoder().encode((value as string).trim());
 }
 
 export function isAdminConfigured(): boolean {
