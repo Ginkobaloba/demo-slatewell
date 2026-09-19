@@ -19,7 +19,8 @@
     "test:admin-security": "tsx scripts/test-admin-security.ts",
     "test:admin-queries": "tsx scripts/test-admin-queries.ts",
     "test:retention": "tsx scripts/test-retention.ts",
-    "e2e:visitor-scope": "node scripts/e2e-visitor-scope.mjs"
+    "e2e:visitor-scope": "node scripts/e2e-visitor-scope.mjs",
+    "ledger:check": "node scripts/ledger.mjs check"
   },
   "dependencies": {
     "@base-ui/react": "^1.5.0",
