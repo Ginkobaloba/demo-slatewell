@@ -24,6 +24,10 @@
  *     is refused afterwards by every admin API handler and by the page guard
  *     (authorizeAdmin), other sessions are unaffected, forged tokens are
  *     never written to the revocation table;
+ *   - W2 (#35 deep verify): a validly signed admin token missing exp, iat, or
+ *     jti is refused at the Edge middleware, the page guard (authorizeAdmin),
+ *     and every API guard (requireAdminApi), and never mutates data; a
+ *     normal session still passes every guard;
  *   - coverage: every admin page (and the layout) calls requireAdminPage and
  *     every exported handler under src/app/api/admin (except the sign-in
  *     endpoint) calls requireAdminApi, so no admin path skips revocation.
@@ -136,8 +140,14 @@ async function main() {
   const { getDb } = await import("../src/lib/db");
   const { isOwnBooking } = await import("../src/lib/scope");
   const { SignJWT } = await import("jose");
-  const { ADMIN_SESSION_COOKIE, VISITOR_COOKIE, signVisitorId, verifyVisitorCookie, verifyAdminSession } =
-    await import("../src/lib/admin-session");
+  const {
+    ADMIN_SESSION_COOKIE,
+    VISITOR_COOKIE,
+    randomId128,
+    signVisitorId,
+    verifyVisitorCookie,
+    verifyAdminSession,
+  } = await import("../src/lib/admin-session");
   const jarOf = (cookie: string) => {
     const map = new Map<string, string>();
     for (const part of cookie.split(";")) {
@@ -335,6 +345,72 @@ async function main() {
   check("handlers: forged calls changed nothing", svc.name === "Facial" && staff.name === "Maya", { svc, staff });
   check("booking A still Confirmed after forged calls",
     (db.prepare("SELECT status FROM bookings WHERE id = ?").get(bookingA) as { status: string }).status === "Confirmed");
+
+  // --- 5b. Sessions missing exp/iat/jti are rejected everywhere (W2, #35
+  // deep verify). The app never mints a session without all three claims,
+  // but a holder of SESSION_SECRET could sign one by hand; verifyAdminSession
+  // must refuse it at the Edge middleware, the page guard (authorizeAdmin,
+  // used by requireAdminPage), and every API guard (requireAdminApi,
+  // exercised here through the real handlers). Sign-out of a normally
+  // minted session still revoking it is covered by section 9 below.
+  const w2ClaimJti = randomId128();
+  const missingExpToken = await new SignJWT({ vid: visitorA, src: "demo", role: "staff" })
+    .setProtectedHeader({ alg: "HS256" })
+    .setJti(w2ClaimJti)
+    .setSubject("demo-admin")
+    .setIssuedAt()
+    .sign(new TextEncoder().encode(SECRET));
+  const missingIatToken = await new SignJWT({ vid: visitorA, src: "demo", role: "staff" })
+    .setProtectedHeader({ alg: "HS256" })
+    .setJti(w2ClaimJti)
+    .setSubject("demo-admin")
+    .setExpirationTime("1h")
+    .sign(new TextEncoder().encode(SECRET));
+  const missingJtiToken = await new SignJWT({ vid: visitorA, src: "demo", role: "staff" })
+    .setProtectedHeader({ alg: "HS256" })
+    .setSubject("demo-admin")
+    .setIssuedAt()
+    .setExpirationTime("1h")
+    .sign(new TextEncoder().encode(SECRET));
+  for (const [label, token] of [
+    ["missing exp", missingExpToken],
+    ["missing iat", missingIatToken],
+    ["missing jti", missingJtiToken],
+  ] as const) {
+    const cookie = `${ADMIN_SESSION_COOKIE}=${token}; ${cookieA}`;
+
+    for (const page of ["/admin", "/admin/schedule"]) {
+      const res = await middleware(req(page, { cookie }));
+      const loc = res.headers.get("location") ?? "";
+      check(`middleware ${page}: token with ${label} -> redirect home`, res.status === 307 && loc.endsWith("/?admin=required"), { status: res.status, loc });
+    }
+    const mwApi = await middleware(req("/api/admin/services", { method: "POST", cookie }));
+    check(`middleware /api/admin/services: token with ${label} -> 401`, mwApi.status === 401, mwApi.status);
+
+    const pageGuard = await authorizeAdmin(jarOf(cookie));
+    check(`page guard (authorizeAdmin): token with ${label} -> unauthenticated`, pageGuard.status === "unauthenticated", pageGuard);
+
+    const apiResults: Record<string, number> = {
+      complete: (await completeRoute.POST(req(`/api/admin/bookings/${bookingA}/complete`, { method: "POST", cookie }), bookingParams(bookingA))).status,
+      servicesPost: (await servicesRoute.POST(req("/api/admin/services", { method: "POST", cookie, body: serviceBody }))).status,
+      staffPut: (await staffRoute.PUT(req("/api/admin/staff/1", { method: "PUT", cookie, body: staffBody }), { params: Promise.resolve({ id: "1" }) })).status,
+    };
+    check(`API guard (requireAdminApi): token with ${label} -> 401 on all three admin APIs`, Object.values(apiResults).every((s) => s === 401), apiResults);
+  }
+  const afterMissingClaims = db.prepare("SELECT status FROM bookings WHERE id = ?").get(bookingA) as { status: string };
+  check("W2: rejected missing-claim tokens changed nothing on booking A", afterMissingClaims.status === "Confirmed", afterMissingClaims);
+  const svcAfterMissingClaims = db.prepare("SELECT name FROM services WHERE id = 1").get() as { name: string };
+  check("W2: rejected missing-claim tokens left the service untouched", svcAfterMissingClaims.name === "Facial", svcAfterMissingClaims);
+  const staffAfterMissingClaims = db.prepare("SELECT name FROM staff WHERE id = 1").get() as { name: string };
+  check("W2: rejected missing-claim tokens left staff untouched", staffAfterMissingClaims.name === "Maya", staffAfterMissingClaims);
+
+  // Positive control: a normal, fully-claimed session still passes every guard.
+  check("W2 control: normal session still passes middleware (page)",
+    (await middleware(req("/admin", { cookie: sessionA }))).headers.get("x-middleware-next") === "1");
+  check("W2 control: normal session still passes middleware (API)",
+    (await middleware(req("/api/admin/services", { method: "POST", cookie: sessionA }))).headers.get("x-middleware-next") === "1");
+  check("W2 control: normal session still passes the page guard (authorizeAdmin)",
+    (await authorizeAdmin(jarOf(sessionA))).status === "ok");
 
   // --- 6. Scope: B never sees A's booking -------------------------------
   const scheduleB = getScheduleForDate(1, TOMORROW, visitorB).map((r) => r.id);

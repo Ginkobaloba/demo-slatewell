@@ -403,3 +403,49 @@ one package it was enough to fire the request.
   the same clean error rather than hanging or duplicating state, and that
   `page.on("pageerror")` sees zero uncaught exceptions or unhandled
   rejections through the whole run.
+
+## D-018: Admin sessions require exp, iat, and jti (2026-09-19)
+
+W2 from the #35 deep verify: `verifyAdminSession()` (`src/lib/admin-session.ts`)
+accepted a validly signed admin token with no `exp` claim -- `/admin`
+answered 200 for it -- and sign-out on such a token was a no-op (0 rows in
+`revoked_admin_sessions`), because `signOut()` in
+`src/app/api/admin/session/route.ts` only revokes when `session.exp` is a
+number. `jose`'s `jwtVerify` only validates `exp`, `iat` (and `nbf`) when the
+claim is present; an absent `exp` is not rejected on its own, it is simply
+never checked. `mintAdminSession()` always sets `exp`, `iat`, and `jti` (D-014),
+so no code path in this app can produce a session without them -- but
+anyone holding `SESSION_SECRET` could sign one by hand, and the verifier has
+to refuse it regardless.
+
+- **Fix.** `verifyAdminSession()` now passes `requiredClaims: ["exp", "iat",
+  "jti"]` to `jwtVerify`, alongside the existing `algorithms: ["HS256"]`
+  pin. A token missing any of the three now fails verification and
+  `verifyAdminSession` returns `null`, same as any other malformed token.
+  The visitor-binding (`checkAdminCookies`) and revocation
+  (`authorizeAdmin`) checks are unchanged; they already only run once a
+  session verifies.
+- **Why `exp`/`iat`/`jti` specifically, not `sub`/`vid`/`src`.** `exp`
+  without a floor lets a hand-signed token outlive the 8-hour TTL every
+  minted session gets, `iat` backs the token's own age claim (defense in
+  depth, since `exp` alone bounds validity), and `jti` is what
+  `revokeAdminSession`/`isAdminSessionRevoked` (D-015) key on -- a token
+  without one cannot be revoked at all, so it must never verify in the
+  first place. `vid`, `src`, and `sub` were already checked by hand after
+  `jwtVerify` returns (see the block right after the `requiredClaims` call);
+  `requiredClaims` only needed to cover the three that were checked by
+  `jwtVerify` alone.
+- **Reach.** `verifyAdminSession` is the one place both the Edge middleware
+  (`checkAdminCookies`, used directly by `src/middleware.ts`) and the Node
+  guard (`authorizeAdmin`, used by `requireAdminPage` and `requireAdminApi`
+  in `src/lib/admin-auth.ts`) verify a session, so the fix closes all three
+  at once; no caller needed its own change.
+- **Verification.** `test:admin-session` signs tokens missing `exp` only,
+  `iat` only, and `jti` only (each with the other two, plus `vid`/`src`/`sub`,
+  present) and confirms `verifyAdminSession` rejects every one, plus a
+  positive control with all three present. `test:admin-security` signs the
+  same three tokens bound to a real visitor cookie and confirms each is
+  refused by the Edge middleware (page redirect, API 401), by the page guard
+  (`authorizeAdmin`), and by three real API handlers (`requireAdminApi`),
+  that none of the rejected calls mutate the database, and that a normally
+  minted session still passes every guard.
