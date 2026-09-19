@@ -26,7 +26,7 @@ export function getStripeSecretKey(): string | null {
     if (!warnedNonTestKey) {
       warnedNonTestKey = true;
       console.error(
-        "[stripe] STRIPE_SECRET_KEY is not a TEST key (sk_test_). Stripe is disabled; this demo never uses live keys.",
+        "[stripe] STRIPE_SECRET_KEY is not a Stripe TEST secret key (sk_test_). Stripe is disabled; this demo accepts only sk_test_ keys.",
       );
     }
     return null;
@@ -49,7 +49,7 @@ export function getStripe(): Stripe {
   const key = getStripeSecretKey();
   if (!key) {
     throw new Error(
-      "STRIPE_SECRET_KEY must be a Stripe TEST key (sk_test_). Live keys are refused.",
+      "STRIPE_SECRET_KEY must be a Stripe TEST secret key (sk_test_). Any other key (live, restricted or publishable) is refused.",
     );
   }
   if (!cached || cached.key !== key) {
