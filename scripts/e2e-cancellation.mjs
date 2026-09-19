@@ -10,14 +10,20 @@
  * cancel; assert Captured. Skips with a notice if no in-window slot
  * exists (early-morning runs against a Tue-Sat business).
  *
- * Every HTTP call below goes through page.request (not a plain Node
- * fetch), so it shares the Playwright page's browser context and cookie
- * jar. The bookings POST mints the HttpOnly slatewell_visitor cookie
- * (D-014); confirmation, the .ics download, and the cancel page are all
- * visitor-scoped and gate their content on that cookie. A bare fetch() has
- * no cookie jar at all, so it drops the cookie the response sets and every
- * follow-up request/page-load in this script would otherwise silently hit
+ * Most HTTP calls below go through page.request (not a plain Node fetch),
+ * so they share the Playwright page's browser context and cookie jar. The
+ * bookings POST mints the HttpOnly slatewell_visitor cookie (D-014); a bare
+ * fetch() has no cookie jar at all, so it would drop the cookie the response
+ * sets and every follow-up request/page-load would otherwise silently hit
  * the visitor-scope gate instead of the surface it means to test.
+ *
+ * The .ics download is the one exception: confirmation and .ics are
+ * visitor-cookie-gated (D-014), and the production image sets that cookie
+ * Secure. Playwright's APIRequestContext (page.request) does not send
+ * Secure cookies to http://127.0.0.1, while the browser itself does
+ * (127.0.0.1 is a potentially trustworthy origin) -- see D-016. So the .ics
+ * fetch below runs inside the page (pageFetch, an in-page fetch()), exactly
+ * like a real browser, instead of through page.request.
  *
  * Prereqs: server on BASE_URL, seeded db. Usage: node scripts/e2e-cancellation.mjs
  */
@@ -38,6 +44,23 @@ const check = (name, ok, detail = "") => {
 };
 const iso = (d) =>
   `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+
+// HTTP from inside the page: the browser attaches its own cookies (Secure
+// ones included on a trustworthy origin), same as the real app's fetches
+// and the same pattern e2e-visitor-scope.mjs uses (D-016).
+async function pageFetch(pg, url, init = {}) {
+  return pg.evaluate(
+    async ({ url, init }) => {
+      const r = await fetch(url, { redirect: "manual", ...init });
+      return {
+        status: r.status,
+        headers: Object.fromEntries(r.headers.entries()),
+        body: await r.text(),
+      };
+    },
+    { url, init },
+  );
+}
 
 // Headings and status text swap in right after a navigation or a click;
 // asserting isVisible() immediately races the render (same fix as
@@ -130,15 +153,17 @@ check(
 );
 await page.screenshot({ path: path.join(SHOTS, "cancel-1-confirmation.png") });
 
-// ICS content over HTTP, through the same browser context (visitor-scoped).
-const icsRes = await page.request.get(
+// ICS content over HTTP, in-page (visitor-scoped, and needs Secure cookies
+// to reach http://127.0.0.1 -- see the file header and D-016).
+const icsRes = await pageFetch(
+  page,
   `${BASE_URL}/book/${SLUG}/confirmation/${idA}/ics`
 );
-const icsText = await icsRes.text();
-check("ics: HTTP 200", icsRes.status() === 200, icsRes.status());
+const icsText = icsRes.body;
+check("ics: HTTP 200", icsRes.status === 200, String(icsRes.status));
 check(
   "ics: content type text/calendar",
-  (icsRes.headers()["content-type"] ?? "").includes("text/calendar")
+  (icsRes.headers["content-type"] ?? "").includes("text/calendar")
 );
 check("ics: VCALENDAR wrapper", icsText.includes("BEGIN:VCALENDAR") && icsText.includes("END:VCALENDAR"));
 check("ics: VTIMEZONE for America/New_York", icsText.includes("TZID:America/New_York"));

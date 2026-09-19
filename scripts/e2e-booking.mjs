@@ -59,12 +59,25 @@ check(
   await waitVisible(page.getByText("Pick a date and time"))
 );
 
-// Click the first enabled date chip, then wait for slots.
-await page.locator('[role="option"]:not([disabled])').first().click();
-await page.waitForSelector("text=Morning", { timeout: 10000 }).catch(() => {});
+// Walk the open date chips until one offers slots. Today's chip can be
+// enabled but past the same-day lead time once its last slot of the day has
+// passed, so clicking only the first chip is not reliable late in the day.
+const dateChips = page.locator(
+  '[role="listbox"][aria-label="Date"] [role="option"]:not([disabled])',
+);
+await dateChips.first().waitFor({ timeout: 15000 });
+const slotButtons = page.locator('[aria-live="polite"] button');
+const chipCount = await dateChips.count();
+for (let i = 0; i < chipCount; i++) {
+  await dateChips.nth(i).click();
+  await slotButtons
+    .first()
+    .waitFor({ timeout: 5000 })
+    .catch(() => {});
+  if ((await slotButtons.count()) > 0) break;
+}
 await page.screenshot({ path: path.join(SHOTS, "book-3-datetime.png") });
 
-const slotButtons = page.locator("section .grid button");
 const slotCount = await slotButtons.count();
 check("time slots offered", slotCount > 0, `count=${slotCount}`);
 await slotButtons.first().click();

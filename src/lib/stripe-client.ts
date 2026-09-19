@@ -24,6 +24,14 @@ import type { Stripe } from "@stripe/stripe-js";
  *   - The import itself is dynamic, so the module (and Stripe's script tag)
  *     is fetched only when a real publishable key reaches this function --
  *     i.e., only when the card step actually mounts.
+ *
+ * The dynamic import, or the loadStripe() call it wraps, can reject (a
+ * network hiccup fetching the chunk, or js.stripe.com itself unreachable --
+ * see D-017). A rejected promise must not get stuck in the cache: the next
+ * call evicts it and re-attempts the import from scratch instead of
+ * replaying the same failure forever. The rejection itself is re-thrown, not
+ * swallowed, so the caller (DepositPaymentStep) decides how to show it
+ * instead of it becoming an uncaught rejection.
  */
 const cache = new Map<string, Promise<Stripe | null>>();
 const NO_STRIPE: Promise<Stripe | null> = Promise.resolve(null);
@@ -34,9 +42,12 @@ export function getStripeClient(
   if (!publishableKey) return NO_STRIPE;
   let promise = cache.get(publishableKey);
   if (!promise) {
-    promise = import("@stripe/stripe-js/pure").then(({ loadStripe }) =>
-      loadStripe(publishableKey),
-    );
+    promise = import("@stripe/stripe-js/pure")
+      .then(({ loadStripe }) => loadStripe(publishableKey))
+      .catch((err) => {
+        cache.delete(publishableKey);
+        throw err;
+      });
     cache.set(publishableKey, promise);
   }
   return promise;
