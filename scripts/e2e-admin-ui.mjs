@@ -36,7 +36,7 @@ const scheduleDate = row?.date;
 const browser = await chromium.launch();
 const page = await browser.newPage({ viewport: { width: 1100, height: 900 } });
 
-// Authenticate (sets the httpOnly demo-admin cookie in the browser context).
+// Authenticate (sets the signed session + visitor cookies in the browser context).
 await page.goto(`${BASE_URL}/`);
 await page.evaluate(() => fetch("/api/admin/session", { method: "POST" }));
 

@@ -1,7 +1,10 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { cookies } from "next/headers";
 import type { Metadata } from "next";
 import { getBookingDetails } from "@/lib/repo";
+import { isOwnBooking } from "@/lib/scope";
+import { readVisitorId } from "@/lib/visitor";
 import { getInstructions } from "@/lib/instructions";
 import {
   formatDateLong,
@@ -22,7 +25,17 @@ export default async function ConfirmationPage(
 ) {
   const params = await props.params;
   const booking = getBookingDetails(params.bookingId);
-  if (!booking || booking.business_slug !== params.slug) notFound();
+  // D-014: only the browser that made the booking can open this page. It
+  // shows the customer's name and embeds the cancel token, and booking ids
+  // are short enough to guess, so an id alone is not enough.
+  const visitorId = readVisitorId(await cookies());
+  if (
+    !booking ||
+    booking.business_slug !== params.slug ||
+    !isOwnBooking(booking, visitorId)
+  ) {
+    notFound();
+  }
 
   const [date, time] = booking.start_at.split("T");
   const instructions = getInstructions(booking.service_name);

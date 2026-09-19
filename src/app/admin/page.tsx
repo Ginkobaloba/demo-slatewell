@@ -18,6 +18,7 @@ import {
   getTopServices,
 } from "@/lib/admin-queries";
 import { StatCard } from "@/components/admin/stat-card";
+import { requireAdminPage } from "@/lib/admin-auth";
 
 export const metadata: Metadata = { title: "Admin Dashboard" };
 
@@ -68,7 +69,9 @@ const STATUS_CHIP: Record<
   },
 };
 
-export default function AdminDashboardPage() {
+export default async function AdminDashboardPage() {
+  // Scope: fictional seed data plus this browser's own bookings (D-014).
+  const visitorId = await requireAdminPage();
   const business = getBusinessBySlug(BUSINESS_SLUG);
   if (!business) {
     return <p className="text-muted-foreground">Business not found.</p>;
@@ -80,15 +83,21 @@ export default function AdminDashboardPage() {
   const windowStartStr = format(addDays(today, -90), "yyyy-MM-dd");
   const windowEndStr = format(addDays(today, 1), "yyyy-MM-dd");
 
-  const todayBookings = getTodayBookings(business.id, todayStr);
-  const weekBookings = getWeekBookings(business.id, todayStr, weekEndStr);
-  const revenue = getRevenueSnapshot(business.id);
+  const todayBookings = getTodayBookings(business.id, todayStr, visitorId);
+  const weekBookings = getWeekBookings(
+    business.id,
+    todayStr,
+    weekEndStr,
+    visitorId
+  );
+  const revenue = getRevenueSnapshot(business.id, visitorId);
   const cancelStats = getCancellationStats(
     business.id,
     windowStartStr,
-    windowEndStr
+    windowEndStr,
+    visitorId
   );
-  const topServices = getTopServices(business.id, 5);
+  const topServices = getTopServices(business.id, visitorId, 5);
 
   // Group week bookings by date
   const byDay: Record<string, typeof weekBookings> = {};

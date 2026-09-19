@@ -3,6 +3,8 @@ import { getBookingDetails, getBusinessBySlug } from "@/lib/repo";
 import { buildBookingIcs } from "@/lib/ics";
 import { getInstructions } from "@/lib/instructions";
 import { publicOrigin } from "@/lib/origin";
+import { isOwnBooking } from "@/lib/scope";
+import { readVisitorId } from "@/lib/visitor";
 
 export const dynamic = "force-dynamic";
 
@@ -13,7 +15,14 @@ export async function GET(
   const params = await props.params;
   const business = getBusinessBySlug(params.slug);
   const booking = getBookingDetails(params.bookingId);
-  if (!business || !booking || booking.business_id !== business.id) {
+  // D-014: same rule as the confirmation page. The .ics carries the cancel
+  // link (with its token), so only the booking's own browser may fetch it.
+  if (
+    !business ||
+    !booking ||
+    booking.business_id !== business.id ||
+    !isOwnBooking(booking, readVisitorId(req.cookies))
+  ) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 

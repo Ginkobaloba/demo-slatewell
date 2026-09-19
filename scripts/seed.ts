@@ -269,8 +269,8 @@ function placeBooking(dayOffset: number): {
 }
 
 const insertBooking = db.prepare(
-  `INSERT INTO bookings (id, business_id, customer_id, service_id, staff_id, start_at, end_at, status, price_cents, deposit_cents, deposit_status, stripe_payment_intent_id, cancel_token, notes, created_at, cancelled_at, cancellation_reason)
-   VALUES (?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  `INSERT INTO bookings (id, business_id, customer_id, service_id, staff_id, start_at, end_at, status, price_cents, deposit_cents, deposit_status, stripe_payment_intent_id, cancel_token, notes, created_at, cancelled_at, cancellation_reason, seeded)
+   VALUES (?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`
 );
 const insertComm = db.prepare(
   `INSERT INTO communications (business_id, booking_id, customer_id, channel, kind, to_address, subject, body, status, sent_at)

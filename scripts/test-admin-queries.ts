@@ -79,14 +79,18 @@ function insertBooking(
     depositCents: number;
     depositStatus: string | null;
     cancelledAt?: string | null;
+    /** D-014 scope. Defaults to a fictional seed row. */
+    seeded?: number;
+    visitorId?: string | null;
   }
 ) {
   db.prepare(
     `INSERT INTO bookings
        (id, business_id, customer_id, service_id, staff_id,
         start_at, end_at, status, price_cents, deposit_cents,
-        deposit_status, cancel_token, created_at, cancelled_at)
-     VALUES (?, 1, 1, ?, 1, ?, ?, ?, ?, ?, ?, 'tok', '2026-01-01T00:00', ?)`
+        deposit_status, cancel_token, created_at, cancelled_at,
+        seeded, visitor_id)
+     VALUES (?, 1, 1, ?, 1, ?, ?, ?, ?, ?, ?, 'tok', '2026-01-01T00:00', ?, ?, ?)`
   ).run(
     opts.id,
     opts.serviceId,
@@ -96,9 +100,15 @@ function insertBooking(
     opts.priceCents,
     opts.depositCents,
     opts.depositStatus,
-    opts.cancelledAt ?? null
+    opts.cancelledAt ?? null,
+    opts.seeded ?? 1,
+    opts.visitorId ?? null
   );
 }
+
+// Two browsers' visitor ids (D-014).
+const VISITOR_A = "a".repeat(32);
+const VISITOR_B = "b".repeat(32);
 
 // ------------------------------------------------------------------
 // Test: queryTodayBookings
@@ -137,7 +147,7 @@ function insertBooking(
     depositStatus: "Held",
   });
 
-  const rows = queryTodayBookings(db, 1, today);
+  const rows = queryTodayBookings(db, 1, today, VISITOR_A);
   check(
     "today: returns only non-cancelled today bookings",
     rows.length === 1,
@@ -209,7 +219,7 @@ function insertBooking(
     depositStatus: "Released",
   });
 
-  const rows = queryWeekBookings(db, 1, today, weekEnd);
+  const rows = queryWeekBookings(db, 1, today, weekEnd, VISITOR_A);
   check(
     "week: returns only non-cancelled in-window bookings",
     rows.length === 2,
@@ -267,7 +277,7 @@ function insertBooking(
     depositStatus: "Released",
   });
 
-  const snap = queryRevenueSnapshot(db, 1);
+  const snap = queryRevenueSnapshot(db, 1, VISITOR_A);
   check(
     "revenue: completed_revenue_cents sums Completed rows",
     snap.completed_revenue_cents === 25000,
@@ -340,7 +350,7 @@ function insertBooking(
 
   const windowStart = "2026-03-18"; // 90 days before 2026-06-16
   const windowEnd = "2026-06-17";
-  const stats = queryCancellationStats(db, 1, windowStart, windowEnd);
+  const stats = queryCancellationStats(db, 1, windowStart, windowEnd, VISITOR_A);
   check(
     "cancel-stats: total = 4 (in-window, all statuses)",
     stats.total === 4,
@@ -407,7 +417,7 @@ function insertBooking(
     depositStatus: null,
   });
 
-  const top = queryTopServices(db, 1, 5);
+  const top = queryTopServices(db, 1, 5, VISITOR_A);
   check("top-services: 2 services", top.length === 2, top);
   check(
     "top-services: service 1 has 2 bookings",
@@ -424,6 +434,41 @@ function insertBooking(
     top[1].service_name === "Massage",
     top[1]
   );
+}
+
+// ------------------------------------------------------------------
+// Test: per-browser scope (D-014). Visitor A sees seed rows and its own
+// bookings; visitor B's booking and pre-D-014 legacy rows never appear in
+// any of A's lists or aggregates.
+// ------------------------------------------------------------------
+{
+  const db = makeDb();
+  const day = "2026-06-16";
+  const common = {
+    serviceId: 1,
+    status: "Completed",
+    priceCents: 10000,
+    depositCents: 2000,
+    depositStatus: "Captured",
+  };
+  insertBooking(db, { ...common, id: "bk_seed", startAt: `${day}T09:00`, endAt: `${day}T10:00` });
+  insertBooking(db, { ...common, id: "bk_mine", startAt: `${day}T10:00`, endAt: `${day}T11:00`, seeded: 0, visitorId: VISITOR_A });
+  insertBooking(db, { ...common, id: "bk_other", startAt: `${day}T11:00`, endAt: `${day}T12:00`, seeded: 0, visitorId: VISITOR_B });
+  insertBooking(db, { ...common, id: "bk_legacy", startAt: `${day}T12:00`, endAt: `${day}T13:00`, seeded: 0, visitorId: null });
+
+  const today = queryTodayBookings(db, 1, day, VISITOR_A).map((r) => r.id).sort();
+  check("scope: today = seed + own only", JSON.stringify(today) === JSON.stringify(["bk_mine", "bk_seed"]), today);
+  const week = queryWeekBookings(db, 1, day, "2026-06-23", VISITOR_A).map((r) => r.id);
+  check("scope: week excludes other visitor", !week.includes("bk_other"), week);
+  check("scope: week excludes legacy rows", !week.includes("bk_legacy"), week);
+  const otherView = queryTodayBookings(db, 1, day, VISITOR_B).map((r) => r.id).sort();
+  check("scope: visitor B sees seed + B only", JSON.stringify(otherView) === JSON.stringify(["bk_other", "bk_seed"]), otherView);
+  const revenue = queryRevenueSnapshot(db, 1, VISITOR_A);
+  check("scope: revenue counts seed + own (20000)", revenue.completed_revenue_cents === 20000, revenue);
+  const stats = queryCancellationStats(db, 1, day, "2026-06-17", VISITOR_A);
+  check("scope: stats total counts seed + own (2)", stats.total === 2, stats);
+  const top = queryTopServices(db, 1, 5, VISITOR_A);
+  check("scope: top services counts seed + own (2)", top[0]?.booking_count === 2, top);
 }
 
 // ------------------------------------------------------------------

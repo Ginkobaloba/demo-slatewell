@@ -2,9 +2,11 @@ import { NextResponse, type NextRequest } from "next/server";
 
 import { verifyPortalToken } from "@/lib/portal-token";
 import {
-  mintSlatewellSession,
-  slatewellSessionCookieAttributes,
-} from "@/lib/portal-session";
+  adminSessionCookieAttributes,
+  isAdminConfigured,
+  mintAdminSession,
+} from "@/lib/admin-session";
+import { resolveVisitorId, setVisitorCookie } from "@/lib/visitor";
 
 /**
  * Portal handoff endpoint (chunk 4b).
@@ -21,8 +23,13 @@ import {
  * the cookie is in place before navigation.
  *
  * The pre-existing /api/admin/session POST path stays in place as a
- * separate cookie shortcut for the demo "Sign in" button; this route is
- * additive.
+ * separate shortcut for the demo "Sign in" button; this route is additive.
+ *
+ * No wider access than the demo button (D-014): the session minted here is
+ * the same signed, visitor-bound session, so a portal staff user sees the
+ * same scope as any visitor (seed data plus this browser's own bookings).
+ * The only thing this route adds is that it requires a verified Portal token
+ * first. If the admin area is not configured (no SESSION_SECRET) it 404s.
  */
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -72,8 +79,15 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const { token, expiresAt } = await mintSlatewellSession({
-    email: verified.email,
+  if (!isAdminConfigured()) {
+    return NextResponse.json({ ok: false, reason: "not_found" }, { status: 404 });
+  }
+
+  const { visitorId, isNew } = resolveVisitorId(request.cookies);
+  const { token, expiresAt } = await mintAdminSession({
+    visitorId,
+    src: "portal",
+    subject: verified.email,
     customerId: verified.customerId ?? null,
     role: verified.role,
   });
@@ -88,8 +102,9 @@ export async function POST(request: NextRequest) {
     { status: 200 },
   );
   res.cookies.set({
-    ...slatewellSessionCookieAttributes(expiresAt),
+    ...adminSessionCookieAttributes(expiresAt),
     value: token,
   });
+  if (isNew) setVisitorCookie(res, visitorId);
   return res;
 }

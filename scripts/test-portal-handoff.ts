@@ -7,7 +7,9 @@
  * portal subdomain is irrelevant), then invokes the route handler with
  * synthetic NextRequest objects. Verifies cookie + redirect for staff,
  * customer downshift to the public landing, and rejection of invalid
- * tokens. Exits nonzero on any failure.
+ * tokens. D-014: the minted session is the same signed, visitor-bound
+ * session the demo button issues (no wider scope), and the route 404s when
+ * the admin area is not configured. Exits nonzero on any failure.
  *
  * We import the handler module directly so we cover the actual code path
  * an HTTP request would hit, not a parallel transport.
@@ -24,7 +26,11 @@ import {
 } from "jose";
 
 import { POST } from "../src/app/api/auth/portal-handoff/route";
-import { SLATEWELL_SESSION_COOKIE as ADMIN_COOKIE } from "../src/lib/portal-session";
+import {
+  ADMIN_SESSION_COOKIE as ADMIN_COOKIE,
+  VISITOR_COOKIE,
+  checkAdminCookies,
+} from "../src/lib/admin-session";
 import { __resetPortalTokenCache } from "../src/lib/portal-token";
 
 const failures: string[] = [];
@@ -98,21 +104,33 @@ async function sign(
     .sign(key.privateKey);
 }
 
-function postJson(body: unknown): NextRequest {
+function postJson(body: unknown, cookie?: string): NextRequest {
   return new NextRequest("http://localhost/api/auth/portal-handoff", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      ...(cookie ? { Cookie: cookie } : {}),
+    },
     body: JSON.stringify(body),
   });
+}
+
+/** name=value pairs from every Set-Cookie header on a response. */
+function setCookies(res: Response): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const line of res.headers.getSetCookie()) {
+    const [pair] = line.split(";");
+    const eq = pair.indexOf("=");
+    out[pair.slice(0, eq)] = pair.slice(eq + 1);
+  }
+  return out;
 }
 
 async function main() {
   process.env.PORTAL_EXPECTED_ISSUER = ISSUER;
   process.env.PORTAL_EXPECTED_AUD = AUD;
-  // The route now mints a signed HS256 session cookie, so SESSION_SECRET
-  // must be present or mintSlatewellSession throws at first use. Use a
-  // 48-char throwaway value; the test does not need to round-trip the
-  // signature here (the dedicated session smoke covers verify).
+  // The route mints a signed HS256 admin session (D-014), so SESSION_SECRET
+  // must be present. A 48-char throwaway value.
   process.env.SESSION_SECRET = "a".repeat(48);
 
   const active = await makeKey("ps-test-handoff");
@@ -154,6 +172,49 @@ async function main() {
         /httponly/i.test(setCookie),
         `set-cookie was: ${setCookie}`,
       );
+
+      // D-014: the session is bound to the visitor cookie minted alongside
+      // it, and verifies through the same gate the middleware uses.
+      const jar = setCookies(res);
+      const visitor = jar[VISITOR_COOKIE] ?? "";
+      check("staff: visitor cookie minted", /^[0-9a-f]{32}$/.test(visitor), jar);
+      const gate = await checkAdminCookies({
+        get: (name) => (jar[name] ? { value: jar[name] } : undefined),
+      });
+      check("staff: session passes the admin gate", gate.status === "ok");
+      check(
+        "staff: session scope is this browser only",
+        gate.status === "ok" && gate.visitorId === visitor,
+      );
+    }
+
+    // --- an existing visitor cookie is reused, not replaced -------------
+    {
+      const existing = "c".repeat(32);
+      const token = await sign(active, { role: "staff" });
+      const res = await POST(postJson({ token }, `${VISITOR_COOKIE}=${existing}`));
+      const jar = setCookies(res);
+      check("reuse: no new visitor cookie", !(VISITOR_COOKIE in jar), jar);
+      const gate = await checkAdminCookies({
+        get: (name) =>
+          name === VISITOR_COOKIE
+            ? { value: existing }
+            : jar[name]
+              ? { value: jar[name] }
+              : undefined,
+      });
+      check("reuse: session bound to the existing visitor id", gate.status === "ok" && gate.visitorId === existing);
+    }
+
+    // --- admin area not configured: verified staff still get 404 --------
+    {
+      const saved = process.env.SESSION_SECRET;
+      delete process.env.SESSION_SECRET;
+      const token = await sign(active, { role: "staff" });
+      const res = await POST(postJson({ token }));
+      check("unconfigured: 404", res.status === 404);
+      check("unconfigured: no cookie", !res.headers.get("set-cookie"));
+      process.env.SESSION_SECRET = saved;
     }
 
     // --- internal role also gets /admin ---------------------------------

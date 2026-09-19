@@ -1,11 +1,14 @@
 /**
  * SQL KPI queries for the admin dashboard. Kept separate from the
- * customer-flow repo.ts. Each query has a pure helper that accepts a
+ * customer-flow repo.ts. Every query is scoped to what the admin session
+ * may see: fictional seed rows plus the session's own browser's bookings
+ * (visitorId, D-014). Each query has a pure helper that accepts a
  * Database instance (so scripts/test-admin-queries.ts can exercise it
  * against an in-memory db) and a thin public wrapper that calls getDb().
  */
 import type { Database } from "better-sqlite3";
 import { getDb } from "@/lib/db";
+import { visibleToVisitorSql } from "@/lib/scope";
 import type { BookingStatus, DepositStatus } from "@/lib/types";
 
 // ---------------------------------------------------------------------------
@@ -52,7 +55,8 @@ export interface TopService {
 export function queryTodayBookings(
   db: Database,
   businessId: number,
-  today: string
+  today: string,
+  visitorId: string
 ): AdminBookingRow[] {
   return db
     .prepare(
@@ -69,16 +73,23 @@ export function queryTodayBookings(
          AND bk.start_at >= ?
          AND bk.start_at < ?
          AND bk.status != 'Cancelled'
+         AND ${visibleToVisitorSql("bk")}
        ORDER BY bk.start_at`
     )
-    .all(businessId, `${today}T00:00`, `${today}T24:00`) as AdminBookingRow[];
+    .all(
+      businessId,
+      `${today}T00:00`,
+      `${today}T24:00`,
+      visitorId
+    ) as AdminBookingRow[];
 }
 
 export function queryWeekBookings(
   db: Database,
   businessId: number,
   startDate: string,
-  endDate: string
+  endDate: string,
+  visitorId: string
 ): AdminBookingRow[] {
   return db
     .prepare(
@@ -95,14 +106,21 @@ export function queryWeekBookings(
          AND bk.start_at >= ?
          AND bk.start_at < ?
          AND bk.status != 'Cancelled'
+         AND ${visibleToVisitorSql("bk")}
        ORDER BY bk.start_at`
     )
-    .all(businessId, `${startDate}T00:00`, `${endDate}T00:00`) as AdminBookingRow[];
+    .all(
+      businessId,
+      `${startDate}T00:00`,
+      `${endDate}T00:00`,
+      visitorId
+    ) as AdminBookingRow[];
 }
 
 export function queryRevenueSnapshot(
   db: Database,
-  businessId: number
+  businessId: number,
+  visitorId: string
 ): RevenueSnapshot {
   const row = db
     .prepare(
@@ -112,9 +130,9 @@ export function queryRevenueSnapshot(
          COALESCE(SUM(CASE WHEN status = 'Confirmed' AND deposit_status = 'Held' THEN deposit_cents ELSE 0 END), 0)
            AS held_deposits_cents
        FROM bookings
-       WHERE business_id = ?`
+       WHERE business_id = ? AND ${visibleToVisitorSql("")}`
     )
-    .get(businessId) as RevenueSnapshot;
+    .get(businessId, visitorId) as RevenueSnapshot;
   return row;
 }
 
@@ -122,7 +140,8 @@ export function queryCancellationStats(
   db: Database,
   businessId: number,
   windowStart: string,
-  windowEnd: string
+  windowEnd: string,
+  visitorId: string
 ): CancellationStats {
   const row = db
     .prepare(
@@ -133,9 +152,15 @@ export function queryCancellationStats(
        FROM bookings
        WHERE business_id = ?
          AND start_at >= ?
-         AND start_at < ?`
+         AND start_at < ?
+         AND ${visibleToVisitorSql("")}`
     )
-    .get(businessId, `${windowStart}T00:00`, `${windowEnd}T00:00`) as {
+    .get(
+      businessId,
+      `${windowStart}T00:00`,
+      `${windowEnd}T00:00`,
+      visitorId
+    ) as {
     total: number;
     cancelled: number;
     no_shows: number;
@@ -154,7 +179,8 @@ export function queryCancellationStats(
 export function queryTopServices(
   db: Database,
   businessId: number,
-  limit: number
+  limit: number,
+  visitorId: string
 ): TopService[] {
   return db
     .prepare(
@@ -164,11 +190,12 @@ export function queryTopServices(
        FROM bookings bk
        JOIN services sv ON sv.id = bk.service_id
        WHERE bk.business_id = ? AND bk.status = 'Completed'
+         AND ${visibleToVisitorSql("bk")}
        GROUP BY bk.service_id, sv.name
        ORDER BY revenue_cents DESC
        LIMIT ?`
     )
-    .all(businessId, limit) as TopService[];
+    .all(businessId, visitorId, limit) as TopService[];
 }
 
 // ---------------------------------------------------------------------------
@@ -177,31 +204,47 @@ export function queryTopServices(
 
 export function getTodayBookings(
   businessId: number,
-  today: string
+  today: string,
+  visitorId: string
 ): AdminBookingRow[] {
-  return queryTodayBookings(getDb(), businessId, today);
+  return queryTodayBookings(getDb(), businessId, today, visitorId);
 }
 
 export function getWeekBookings(
   businessId: number,
   startDate: string,
-  endDate: string
+  endDate: string,
+  visitorId: string
 ): AdminBookingRow[] {
-  return queryWeekBookings(getDb(), businessId, startDate, endDate);
+  return queryWeekBookings(getDb(), businessId, startDate, endDate, visitorId);
 }
 
-export function getRevenueSnapshot(businessId: number): RevenueSnapshot {
-  return queryRevenueSnapshot(getDb(), businessId);
+export function getRevenueSnapshot(
+  businessId: number,
+  visitorId: string
+): RevenueSnapshot {
+  return queryRevenueSnapshot(getDb(), businessId, visitorId);
 }
 
 export function getCancellationStats(
   businessId: number,
   windowStart: string,
-  windowEnd: string
+  windowEnd: string,
+  visitorId: string
 ): CancellationStats {
-  return queryCancellationStats(getDb(), businessId, windowStart, windowEnd);
+  return queryCancellationStats(
+    getDb(),
+    businessId,
+    windowStart,
+    windowEnd,
+    visitorId
+  );
 }
 
-export function getTopServices(businessId: number, limit = 5): TopService[] {
-  return queryTopServices(getDb(), businessId, limit);
+export function getTopServices(
+  businessId: number,
+  visitorId: string,
+  limit = 5
+): TopService[] {
+  return queryTopServices(getDb(), businessId, limit, visitorId);
 }

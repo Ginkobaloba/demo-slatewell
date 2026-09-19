@@ -2,13 +2,15 @@ import type { Metadata } from "next";
 import { getBusinessBySlug } from "@/lib/repo";
 import { getAllServices } from "@/lib/admin-repo";
 import { ServicesClient } from "@/components/admin/services-client";
+import { requireAdminPage } from "@/lib/admin-auth";
 
 export const metadata: Metadata = { title: "Services" };
 export const dynamic = "force-dynamic";
 
 const BUSINESS_SLUG = "wave-wellness";
 
-export default function ServicesPage() {
+export default async function ServicesPage() {
+  await requireAdminPage();
   const business = getBusinessBySlug(BUSINESS_SLUG);
   if (!business) {
     return <p className="text-muted-foreground">Business not found.</p>;
