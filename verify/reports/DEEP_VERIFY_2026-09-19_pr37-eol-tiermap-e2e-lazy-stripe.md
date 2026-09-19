@@ -1,7 +1,281 @@
-# Deep Verify: PR #37 lazy Stripe.js, deposit-intent tier map, e2e script fixes, LF rules (2026-09-19)
+# Deep Verify: PR #37 lazy Stripe.js, deposit-intent tier map, e2e script fixes, LF rules (2026-09-19, re-verified)
 
 Overall: PASS
-Tested-SHA: 79575c3554fd502b11a308a47248732af347d24f
+Tested-SHA: a14555f45af221492a6400bfe5e7359dce74a2e3
+
+This report now covers the rebased head `a14555f`, which sits on
+`origin/main` `86e14b8`. The first run (at `79575c3`, further down, kept as
+history) found two merge blockers and five warnings. The re-verify below
+shows both blockers fixed, and Warnings 1, 3, 4 and 5 fixed.
+Warning 2 (the leaked keys) is a process item, not code; it stays open for
+Drew. Totals for the re-verify: 24 of 24 harness checks passed (5 INFO),
+`e2e-booking` 13/0 three times, `e2e-cancellation` 22/0 three times (flow B
+skipped each time), and every unit suite, `tsc` and lint are green.
+
+**One deviation from the dispatch, stated up front:** the re-verify ran
+against a production build of `a14555f` served by `next start`, **not** a
+freshly built image. The Docker Desktop engine answered
+`500 Internal Server Error` on every API call (`docker version`,
+`docker ps`, and `docker build`) on both `desktop-linux` and `default`
+pipes, from about 19:45Z until this report was written, and it never came
+back. The engine was not restarted: a restart would take down the live demo
+containers, and that is Drew's call. See section R.8.
+
+## R. Re-verify at `a14555f` (2026-09-19, about 19:45Z to 20:10Z)
+
+### R.1 Target, environment and secret handling
+
+- **Target:** branch `chore/eol-tiermap-e2e`, head
+  `a14555f45af221492a6400bfe5e7359dce74a2e3`. `origin/main` (`86e14b8`) is an
+  ancestor (`git merge-base --is-ancestor` exit 0), so the rebase is real.
+- **Build:** `npm ci --userconfig <scratchpad>\creds\npmrc` (the file was
+  passed by path only; it was never opened or printed), `npm run db:seed`,
+  `npm run build` in the worktree. The build log has no `Environments:`
+  line, so no `.env*` file was loaded; the worktree holds only
+  `.env.example`.
+- **Servers:** two `next start -H 127.0.0.1` processes, started as
+  `node --env-file=<creds>\test-session.env [--env-file=<creds>\fake-stripe.env] ...`,
+  so env values went straight from those files into the process and were
+  never read or printed by this run.
+
+  | Server | Port | Env files | Used for |
+  |---|---|---|---|
+  | nokey | 18735 | test-session.env | N crawl, both e2e scripts |
+  | key | 18736 | test-session.env + fake-stripe.env (all zeros) | K crawl, card-step timing, W3 failure and retry, race |
+
+  The key server delivers a `pk_test_` publishable key (the fake one) to
+  `/book`, so the card flow is on. Both processes were stopped at the end;
+  neither port is listening.
+- **Stripe:** every browser request to `*.stripe.com` and `*.stripe.network`
+  was aborted in Playwright, or, in the stub phases, answered with a local
+  stub of `window.Stripe`. A host process cannot be firewalled from
+  `api.stripe.com` the way the containers were (`--add-host`), so every
+  browser phase on the key server had `POST /deposit-intent` answered by the
+  harness. The server's Stripe client was therefore never called, and nothing
+  reached Stripe.
+- **Secret rules this round:** nothing under `C:\Users\Drama\.secrets`,
+  `C:\dev\demo-slatewell\.env.local` or any `.env*` file was read, hashed,
+  copied or opened. No key comparison was made. No PowerShell function with a
+  one- or two-letter name was defined.
+- **Evidence:** `verify-runs/demo-slatewell-pr37-r2/` in the session
+  scratchpad (`h37r2.mjs`, `h37r2_run1.log`, `e2e-*_N.log`, `suite_*.log`,
+  `tsc.log`, `lint.log`, `next-build.log`, `build.log` with the Docker error).
+
+### R.2 Diff review of `a14555f` against `origin/main`
+
+`git diff --numstat origin/main...a14555f`:
+
+| File | +/- | Expected? |
+|---|---|---|
+| `.gitattributes` | 2/0 | yes, claim 5 |
+| `docs/decisions.md` | 58/0 | yes, D-017 only (pure addition) |
+| `scripts/e2e-booking.mjs` | 52/11 | yes, heading waits and the W4 chip loop |
+| `scripts/e2e-cancellation.mjs` | 102/51 | yes, `page.request` and the W5 in-page `.ics` fetch |
+| `scripts/e2e-stripe-load-failure.mjs` | 129/0 | yes, new W3 regression script |
+| `src/components/booking/deposit-payment-step.tsx` | 57/4 | yes, W3 error, Retry and Back |
+| `src/lib/stripe-client.ts` | 29/2 | yes, lazy import and cache eviction |
+| `verify/reports/DEEP_VERIFY_2026-09-19_pr37-...md` | 518/0 | the carried first-run report (blob identical to `b5353f8`'s) |
+| `verify/smoke.yml` | 6/0 | yes, claim 4 |
+| `verify/tier_map.yml` | 14/0 | yes, claim 4 |
+
+Nothing else changes. No admin, middleware, session, dependency or workflow
+file is touched.
+
+Code review of the two source files:
+
+- `getStripeClient()` now chains `.catch((err) => { cache.delete(key); throw err; })`
+  onto the import-and-load promise before caching it. The first call after a
+  failure therefore starts over, and the rejection still reaches the caller.
+- `DepositPaymentStep` awaits `getStripeClient()` in an effect keyed on
+  `[publishableKey, retryCount]`, with a `cancelled` guard, and passes the
+  resolved client (initially `null`) to `<Elements stripe>`. On rejection it
+  renders a `role="alert"` message, `Retry` (bumps `retryCount`) and `Back`,
+  instead of `<Elements>`/`DepositForm`. `react-stripe-js` accepts the
+  `null` then instance transition once (its `safeSetContext` path), which
+  R-1 to R-3 exercise.
+
+### R.3 D-017 numbering and main's decisions
+
+- `docs/decisions.md` at `a14555f` has `## D-015: Sign-out revokes the admin session server-side`,
+  `## D-016: The visitor cookie is signed` and
+  `## D-017: Stripe.js loads only when the card step mounts`. The file's
+  diff against `main` is 58 added lines and 0 removed, so main's D-015 and
+  D-016 are byte-for-byte intact.
+- `stripe-client.ts` says `(see D-017)` twice; `e2e-stripe-load-failure.mjs`
+  says D-017; the PR body says D-017. The remaining D-015 and D-016
+  mentions in scripts are #35's own and are correct.
+- **Nit, not blocking:** D-017's first "Verification" bullet still says the
+  with-key run confirmed "Elements still renders, deposit card entry still
+  works". That run only counted `js.stripe.com` requests (first run, section
+  4). A one-line wording fix whenever the file is next touched.
+
+### R.4 Deep gate
+
+`git rev-parse` of `verify/ci/deep_gate.sh` and of
+`.github/workflows/verify.yml` are identical at `a14555f` and at
+`origin/main`. The branch runs main's per-PR gate: the report must name
+`pr37`, carry `Overall: PASS` and a `Tested-SHA` that is an ancestor of the
+head with only `verify/reports/` changed since. The first run's report
+(`Tested-SHA: 79575c3`) is not an ancestor of the rebased head, so it would
+not have satisfied the gate. This update is what does.
+
+### R.5 Harness log (verbatim)
+
+```
+== N: no Stripe keys (dvs37r2-nokey), every page ==
+PASS  N-1  0 requests to *.stripe.com across 13 pages incl. wizard to confirmation, cancel, deposit-service Review, 8 admin pages  [stripe 0]
+PASS  N-2  loader chunk never fetched  [chunk 0]
+PASS  N-3  deposit service with no key: Review offers 'Confirm booking'  [Confirm booking]
+PASS  N-4  admin sign-in 303  [303]
+PASS  N-5  no uncaught page errors  []
+INFO  N-6  per page label:status:stripe/chunk  [home:200:0/0 ; book:200:0/0 ; confirmation:200:0/0 ; cancel:200:0/0 ; review(deposit svc)='Confirm booking':0/0 ; /admin:200:0/0 ; /admin/schedule:200:0/0 ; /admin/customers:200:0/0 ; /admin/services:200:0/0 ; /admin/staff:200:0/0 ; /admin/communications:200:0/0 ; /admin/reports:200:0/0 ; /admin/settings:200:0/0]
+
+== K: fake keys configured (dvs37r2-key), Stripe aborted ==
+PASS  K-1  0 stripe requests across every page and the wizard up to Review  [stripe 0]
+PASS  K-2  loader chunk not fetched before the card step  [chunk 0]
+PASS  K-3  deposit service Review offers 'Continue to deposit'  [Continue to deposit ($25)]
+PASS  K-4  no uncaught page errors on the crawl  []
+INFO  K-5  per page label:status:stripe/chunk  [home:200:0/0 ; book:200:0/0 ; confirmation:200:0/0 ; cancel:200:0/0 ; review(deposit svc)='Continue to deposit ($25)':0/0 ; /admin:200:0/0 ; /admin/schedule:200:0/0 ; /admin/customers:200:0/0 ; /admin/services:200:0/0 ; /admin/staff:200:0/0 ; /admin/communications:200:0/0 ; /admin/reports:200:0/0 ; /admin/settings:200:0/0]
+PASS  K-6  0 stripe requests and no chunk until the click into the Payment step  [stripe 0 chunk 0]
+PASS  K-7  card step mount fetches the loader chunk, then attempts js.stripe.com (aborted)  [chunk +38 ms; stripe 1 first +45 ms https://js.stripe.com/basil/stripe.js]
+INFO  K-8  deposit-intent answered by the harness (the host server is not firewalled from api.stripe.com), js.stripe.com aborted: what the user sees  [alerts ["We could not load the secure payment form. Check your connection and try again."]; retry 1; submit 0; intents 1; pageErrors 0]
+PASS  K-9  js.stripe.com aborted on first mount: a clear message, no stuck 'Preparing secure payment...', 0 uncaught errors  [pageErrors ]
+PASS  W-1a  loader chunk blocked: clear error, Retry and Back shown, no stuck 'Preparing secure payment...'  [error true; retry 1; back 2; stuck 0; chunk 1; stripe 0]
+PASS  W-1b  loader chunk blocked: Retry re-attempts the load (new chunk request) and fails cleanly again  [chunk 1->2; stripe 0->0; error again true]
+INFO  W-1c  loader chunk blocked: deposit-intent POSTs across the failed load and one Retry  [1 -> 2]
+PASS  W-1d  loader chunk blocked: after the cause clears, Retry recovers to a ready card form ('Hold ... & confirm booking')  [ready true; chunk 3; stripe 1; intents 3]
+PASS  W-1e  loader chunk blocked: 0 uncaught errors or unhandled rejections through failure, retry and recovery  []
+PASS  W-2a  js.stripe.com blocked: clear error, Retry and Back shown, no stuck 'Preparing secure payment...'  [error true; retry 1; back 2; stuck 0; chunk 1; stripe 1]
+PASS  W-2b  js.stripe.com blocked: Retry re-attempts the load (new js.stripe.com request) and fails cleanly again  [chunk 1->1; stripe 1->2; error again true]
+INFO  W-2c  js.stripe.com blocked: deposit-intent POSTs across the failed load and one Retry  [1 -> 2]
+PASS  W-2d  js.stripe.com blocked: after the cause clears, Retry recovers to a ready card form ('Hold ... & confirm booking')  [ready true; chunk 1; stripe 3; intents 3]
+PASS  W-2e  js.stripe.com blocked: 0 uncaught errors or unhandled rejections through failure, retry and recovery  []
+PASS  R-1  race {"chunkDelayMs":3000}: mounted before the load resolved, then Elements got the instance; no page errors  [early 'Preparing secure payment...' disabled true; ready true; chunk 1; stripe 1; pageErrors ]
+PASS  R-4  Back then Continue again: ready, no second chunk or Stripe script fetch (memoized)  [ready true; chunk 1->1; stripe 1->1]
+PASS  R-2  race {"stripeDelayMs":3000}: mounted before the load resolved, then Elements got the instance; no page errors  [early 'Preparing secure payment...' disabled true; ready true; chunk 1; stripe 1; pageErrors ]
+PASS  R-3  race {"chunkDelayMs":2000,"stripeDelayMs":2000}: mounted before the load resolved, then Elements got the instance; no page errors  [early 'Preparing secure payment...' disabled true; ready true; chunk 1; stripe 1; pageErrors ]
+
+TOTAL 24/24 passed (0 FAIL; 5 INFO)
+```
+
+The group labels still say `dvs37r2-*` from the harness template; the
+servers were the two `next start` processes in R.1. The loader chunk is
+again `703.c2aa80172bdc823a.js`, the only chunk in the build containing
+`js.stripe.com`.
+
+### R.6 Results against the six re-verify asks
+
+1. **W3 (failed load): FIXED.**
+   - Stripe script blocked (W-2) and loader chunk blocked (W-1): each shows
+     "We could not load the secure payment form. Check your connection and
+     try again." with `Retry` and `Back`. No `Preparing secure payment...`
+     button, and 0 uncaught errors or unhandled rejections from failure
+     through retry and recovery (W-1e, W-2e, K-9).
+   - Retry re-attempts the import: a new chunk request (1 to 2) when the
+     chunk is blocked, and a new `js.stripe.com` request (1 to 2) when
+     the script is blocked (W-1b, W-2b). Under the first run's code both
+     stayed at 1.
+   - Once the cause clears, Retry recovers to a ready card form (W-1d, W-2d).
+   - The builder's `e2e-stripe-load-failure.mjs` was **not run** here. It
+     aborts `js.stripe.com` but lets `POST /deposit-intent` reach the
+     server, and a `next start` process with the fake `sk_test_` key would
+     then call the real `api.stripe.com`. W-2 covers the same scenario
+     with the server call intercepted. Its "Retry re-attempts" check also
+     only asserts the error reappears, which the old code would have passed
+     too; W-1b and W-2b count requests.
+2. **Lazy load: still CONFIRMED on the new head.** 13 pages with no key, 0
+   Stripe requests and 0 chunk fetches (N-1, N-2). With the fake key, 0
+   through wizard steps 1 to 4 (K-1, K-2, K-6); on the card step the chunk
+   loads at +38 ms and `js.stripe.com/basil/stripe.js` is attempted at +45 ms
+   (K-7). Races still resolve into a Stripe instance with no errors, and
+   Back and Continue reuse the memoized load (R-1 to R-4).
+3. **W4 and W5: FIXED.** Both scripts, unmodified from `a14555f`, run from
+   the worktree against the no-key server on `http://127.0.0.1:18735` at
+   about 20:00Z to 20:05Z (16:00 in New York on a Saturday, later than the first
+   run's failures):
+
+   | Script | Run 1 | Run 2 | Run 3 |
+   |---|---|---|---|
+   | e2e-booking | 13/0 | 13/0 | 13/0 |
+   | e2e-cancellation | 22/0, flow B skipped | 22/0, flow B skipped | 22/0, flow B skipped |
+
+   `e2e-booking` now walks the date chips past today's empty one (W4).
+   `e2e-cancellation`'s 7 `.ics` checks pass on `127.0.0.1` because the
+   `.ics` is fetched in the page (W5).
+
+   **Running them with Stripe unset is legitimate.** On the fake-key server,
+   a direct `POST /bookings` for the $25 Signature Facial without a
+   `paymentIntentId` answers
+   `402 {"error":"A deposit is required for this service."}` (checked
+   here). That is the D-012 gate short-circuiting before any Stripe call,
+   so with keys set these scripts cannot book directly by design. Keyless is
+   the documented policy-only mode (`isDepositCardFlowEnabled()` false),
+   and the scripts exist to test booking, confirmation, `.ics`, cancel
+   tokens and deposit bookkeeping, not card entry. The cost is plain: no
+   automated test here covers the card-hold path end to end.
+   `e2e-deposit-ui.mjs` needs real Stripe, and nobody should run it until
+   the keys are rotated.
+4. **D-017: CONFIRMED** (R.3).
+5. **Deep gate equals main's: CONFIRMED** (R.4).
+6. **Diff review: CONFIRMED**, only the stated files plus the carried
+   report (R.2).
+
+Also green at `a14555f`, run in the worktree with `SESSION_SECRET` unset in
+the shell:
+- `test:deposits` 7/7
+- `test:stripe-config` 29/0
+- `test:admin-session` 78/0
+- `test:admin-security` 184/0
+- `test:retention` 31/0
+- `test:portal-handoff` 31/0
+- `ledger:check` 1 entry, 0 problems
+- `tsc --noEmit` exit 0
+- `next lint` exit 0, with the one pre-existing `exhaustive-deps` warning at booking-wizard.tsx:146
+
+These are #35's counts now, since the branch includes #35. `git status`
+stayed clean.
+
+### R.7 Still open
+
+- **Warning 2 (leaked keys reused): open, Drew's call.** Rotate, then scrub
+  the copies listed in first-run section 7. Nothing in this PR changes.
+- **Minor, new:** each Retry (and, as before this PR, each Back then
+  Continue) remounts `DepositForm`, which POSTs `/deposit-intent` again
+  (W-1c, W-2c: 1 to 2 to 3). With real keys, each POST creates a fresh
+  unconfirmed PaymentIntent. No money moves and no DB row is written
+  (`createDepositIntent` only calls `paymentIntents.create`), but abandoned
+  intents pile up in the Stripe dashboard. Optional fix: keep the intent in
+  the wizard's state across remounts, or pass an idempotency key per slot.
+  Tier-3 file, Sonnet-class, not a blocker.
+- **Nit:** D-017's overclaiming "Verification" sentence (R.3).
+- **Coverage:** no image and no container layer this round (R.8); real
+  `CardElement` and `confirmCardPayment` still untested (needs rotated keys);
+  Layer 5 not run, by instruction.
+
+### R.8 Docker engine outage (environment, not the PR)
+
+- `docker build --secret id=npmrc,src=<path> -t demo-slatewell:dv37r2 .`
+  failed at about 19:45Z with
+  `request returned 500 Internal Server Error for API route and version .../v1.53/...`.
+  The same 500 came back on `docker version` and `docker ps`, on both the
+  `desktop-linux` and `default` pipes, and a 5-minute poll (2 s interval),
+  then another, never saw it recover. The Docker Desktop and backend
+  processes have been up since 2026-09-18 21:34.
+- No container, image or network was created this round, so there is
+  nothing of this run's to clean up in Docker.
+- **Not investigated further and not restarted.** Drew should know the local
+  engine API is down: the live demos run on this engine, and while this run
+  did not probe the public URLs (out of bounds), a wedged engine may already
+  be affecting them. See the `docker-desktop-wedged-afunix-sockets` memory
+  before any restart.
+- **Recommended when the engine is back:** one short container pass (N-1
+  plus K-7 plus W-2 against `demo-slatewell:<tag>` built from `a14555f`). The
+  client-side behavior tested here does not depend on standalone versus
+  `next start`, so this is confirmation, not a gap in the verdict.
+
+---
+
+## First-run summary (at `79575c3`, superseded where R says so)
 
 The code on this commit does what the PR says. Stripe.js is not requested on
 any page of the app until the card step mounts, with or without a key
@@ -24,7 +298,7 @@ that #35 already put on `main`. See Blockers. The fix changes a file outside
 This run also printed them once by accident. See section 7. Neither is a
 defect in the diff (the diff contains no key), but both need action.
 
-## 1. Target and scope
+## First run, 1. Target and scope
 
 - **Target:** `Ginkobaloba/demo-slatewell` PR #37, branch
   `chore/eol-tiermap-e2e`, head `79575c3`
@@ -73,7 +347,7 @@ defect in the diff (the diff contains no key), but both need action.
   `h37_key_run2.log`, `build.log`, `suite_*.log`, `tsc.log`, `lint.log`,
   `e2e-img_*.log`, `lh_e2e-img_*.log`, `mod_e2e-booking_*.log`, `old_*.log`).
 
-## 2. Results by category
+## First run, 2. Results by category
 
 | Category | Result | Evidence |
 |---|---|---|
@@ -92,7 +366,7 @@ defect in the diff (the diff contains no key), but both need action.
 | visual_regression | SKIP | no baseline exists |
 | cross_browser | SKIP | Chromium only, headless |
 
-### Layer 1: code (at `79575c3`)
+### First run: Layer 1: code (at `79575c3`)
 
 - Diff: 7 files, +186/-59: `.gitattributes`, `docs/decisions.md`,
   `scripts/e2e-booking.mjs`, `scripts/e2e-cancellation.mjs`,
@@ -142,7 +416,7 @@ defect in the diff (the diff contains no key), but both need action.
   / `Deep-verify report shows PASS. Gate satisfied.` It ran this branch's old
   any-PASS `deep_gate.sh`, not `main`'s per-PR one (#33). See Warning 1.
 
-### Layer 2: runtime
+### First run: Layer 2: runtime
 
 - All four containers were `running` with `RestartCount=0` after their
   sweeps. None of their logs contains an error line.
@@ -151,7 +425,7 @@ defect in the diff (the diff contains no key), but both need action.
   No key value appears in any log (the only `sk_test_` hit is inside that
   message). `dvs37-pklive` and `dvs37-key` logged no `[stripe]` line.
 
-### Layer 3 and 4: network and headless
+### First run: Layer 3 and 4: network and headless
 
 **Where the Stripe code lives in the built image** (`/app/.next/static/chunks`):
 
@@ -172,7 +446,7 @@ eager load back.
 `verify/ci/quick_smoke.sh` iterates every `surfaces[]` entry of `smoke.yml`,
 so the new entry is picked up.
 
-### Layer 6: edge cases and claims (verbatim)
+### First run: Layer 6: edge cases and claims (verbatim)
 
 - **N** is every page with no keys; **K** every page with a (fake) test key
   set, then the card step mounted with Stripe aborted and the server's Stripe
@@ -259,7 +533,7 @@ Harness notes (not app defects; stated so the log is honest):
   over chips. It is evidence about the app and the rest of the script, never
   about the PR's script as written.
 
-### e2e scripts against the built image
+### First run: e2e scripts against the built image
 
 | Script (at `79575c3`, unmodified) | Host | Run 1 | Run 2 | Run 3 |
 |---|---|---|---|---|
@@ -287,7 +561,7 @@ to skip chip 0 for chip 1. So the builder's claim was true when it was made,
 and the script turns red every business day once the last slot of the day
 has passed.
 
-## 3. Claim by claim
+## First run, 3. Claim by claim
 
 1. **Stripe.js loads lazily: CONFIRMED.**
    - `stripe-client.ts` keeps only `import type` from `@stripe/stripe-js`
@@ -348,7 +622,7 @@ has passed.
    the page, 0 Stripe requests happen, and deposit-intent answers 503
    (L-1 to L-4, LS-1 to LS-4). `sk_live_` is logged without the key.
 
-## 4. Theater Check
+## First run, 4. Theater Check
 
 | PR #37 claimed | Verification found | Verdict |
 |---|---|---|
@@ -369,7 +643,7 @@ has passed.
 | Did not touch the files owned by "open PR #35" | Correct for the files; but #35 was already merged at 07:36Z, before this PR was opened at 18:41Z. The branch was cut from `4d19760` instead of current `origin/main` | CONFIRMED (files); STALE BASE |
 | CI Deep Verify green | It matched the #27 report under the branch's old gate | THEATER (Warning 1) |
 
-## 5. Blockers
+## First run, 5. Blockers
 
 None in the code under test. Two things block the merge itself, and both
 need a new commit on the branch:
@@ -394,9 +668,9 @@ new head (the merged code includes #35's D-016 checks in
 `deposit-intent/route.ts`, which this run did not test with this PR), then
 commit that report.
 
-## 6. Warnings
+## First run, 6. Warnings
 
-### Warning 1: the Tier-3 gate on this PR was theater again
+### First run: Warning 1: the Tier-3 gate on this PR was theater again
 
 - Deep Verify passed in 4 s by matching `DEEP_VERIFY_2026-09-18_pr27-stripe-pk-runtime.md`.
   The branch still carries the old any-PASS `deep_gate.sh` because it was
@@ -404,14 +678,14 @@ commit that report.
 - **Fix:** rebasing onto `main` (Blocker 1) brings in the per-PR gate. No
   separate work. Tier: CI, rides along with the rebase.
 
-### Warning 2: the builder reused the leaked Stripe keys (section 7)
+### First run: Warning 2: the builder reused the leaked Stripe keys (section 7)
 
 - **Fix:** rotate the Stripe TEST keys (already required), scrub the copies
   listed in section 7, and make "never read another checkout's `.env.local`"
   explicit in dispatches. Rotation and scrubbing are Drew's call, not
   code; nothing in this PR changes.
 
-### Warning 3: a failed Stripe load shows nothing and never retries
+### First run: Warning 3: a failed Stripe load shows nothing and never retries
 
 - F-1 (loader chunk blocked) and F-2 (js.stripe.com blocked): the page does
   not crash and Back works, but the button stays on
@@ -430,7 +704,7 @@ commit that report.
   error with a retry (`<Elements>` exposes no error hook). Tier-3 file;
   Sonnet-class can write it, the deep verify stays with Opus.
 
-### Warning 4: e2e-booking is still red for part of every business day
+### First run: Warning 4: e2e-booking is still red for part of every business day
 
 - It clicks the first enabled date chip, and chips are enabled by weekday,
   not by remaining slots. After the day's last slot, today is enabled and
@@ -440,7 +714,7 @@ commit that report.
   does). Test-only, Haiku- or Sonnet-class. Separately, and optional: an
   enabled day with no remaining slots is a small UX nit in the wizard.
 
-### Warning 5: e2e-cancellation fails its `.ics` checks on `http://127.0.0.1`
+### First run: Warning 5: e2e-cancellation fails its `.ics` checks on `http://127.0.0.1`
 
 - Playwright's `page.request` does not send the `Secure` visitor cookie to
   `http://127.0.0.1` (only to `https:` or `localhost`); the browser does.
@@ -450,7 +724,7 @@ commit that report.
   or document that `BASE_URL` must be `localhost` or `https`. Test-only,
   Haiku- or Sonnet-class.
 
-### Minor, not blocking
+### First run: Minor, not blocking
 
 - The PR body says the files it avoided are "owned by open PR #35"; #35 was
   merged before this PR was opened. Correct the body when renumbering.
@@ -460,7 +734,7 @@ commit that report.
 - The worktree has `w/crlf` working copies of 10 `.mjs`/`.sh` files from
   before the attribute existed; a fresh checkout gets LF.
 
-### Coverage gaps (stated so the PASS is not overclaimed)
+### First run: Coverage gaps (stated so the PASS is not overclaimed)
 
 - **Layer 5 (headed Chrome) was not run**, by instruction.
 - No real Stripe: `CardElement`, card entry and `confirmCardPayment` were not
@@ -471,7 +745,7 @@ commit that report.
 - `e2e:visitor-scope` was not re-run (unchanged by this PR).
 - axe, visual regression and cross-browser runs were not done.
 
-## 7. Key hygiene
+## First run, 7. Key hygiene
 
 **Question:** did the builder's "with-key" contrast check use the real keys
 from `C:\Users\Drama\.secrets\demo_env_slatewell.local.txt`, which leaked
