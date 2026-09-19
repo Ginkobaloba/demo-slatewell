@@ -5,7 +5,9 @@ Overall: PASS
 The PR's own checks and the edge sweep passed 115 of 115, and the repo's own
 assertions passed 34 of 34 (3 N/A because HSTS is edge-only, 2 SKIP for axe).
 Nothing in this run called the Stripe API. The coverage gaps at the end list
-what this PASS does not show.
+what this PASS does not show. CI note: Quick Verify is red on this head because
+of an unrelated edge change, so the CI Deep Verify job has not run yet (see
+"CI state").
 
 ## 1. Target and scope
 
@@ -323,6 +325,36 @@ treats payment as Tier-3. That mismatch is why this PR's Deep Verify job
 skipped until the `tier-3` label was added by hand. Recommend raising
 `booking-flow` (and adding a `deposit-intent` surface) to `tier: 3` with
 `deep_verify_before_merge: true`.
+
+### CI state (the one open item on this PASS)
+
+- **Quick Verify is red on this head, and the cause is not this PR.** Quick
+  Verify runs `verify/smoke.yml` against the public `deploy_url`, not the PR
+  head.
+  - At 2026-09-18 21:32 CDT (02:32Z), the untracked, git-ignored demo-proxy
+    config `C:\dev\cloudflare-config\nginx\conf.d\slatewell.conf` gained
+    `location ^~ /admin { return 404; }` and
+    `location ^~ /api/admin { return 404; }`. A comment there says the demo
+    admin views exposed visitor-entered PII.
+  - Since then the public edge returns 404 for `/admin` and
+    `/api/admin/session`. The origin (`127.0.0.1:8105`) still answers 307 and
+    405 correctly.
+  - `smoke.yml` still expects 405 and the `?admin=required` redirect, so
+    `admin-session-post` and `admin-unauthenticated` fail.
+  - The earlier run on `2d8e268` (20:30Z) was green. `smoke.yml` is unchanged
+    on `main`, so every PR in this repo is red on Quick Verify right now.
+- **Deep Verify has not run.** The workflow has `needs: quick-verify`, so it
+  shows as skipped even with the `tier-3` label applied.
+- **The gate script itself passes on this tree.** A local
+  `bash verify/ci/deep_gate.sh` printed "Deep-verify report shows PASS. Gate
+  satisfied." and exited 0.
+- **Recommended unblock, not done here:** a separate chore PR that updates the
+  admin surfaces in `verify/smoke.yml` to the intentional edge 404, merged
+  first, then #27 rebased onto `main` and re-run. Changing the gate's own spec
+  inside the PR it gates was deliberately avoided.
+- If the edge 404 is permanent, the three `tier: 3` admin surfaces in
+  `tier_map.yml` are no longer reachable from the public URL, so their smoke
+  coverage needs rethinking.
 
 ### Coverage gaps (stated so the PASS is not overclaimed)
 
