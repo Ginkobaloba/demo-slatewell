@@ -345,3 +345,61 @@ for that browser's bookings and admin scope.
   route coverage walk), `test:portal-handoff`, `test:retention` (revocation
   expiry), and `e2e:visitor-scope` against `next start` and the production
   image.
+
+## D-017: Stripe.js loads only when the card step mounts (2026-09-19)
+
+`/book/wave-wellness` requested js.stripe.com even with no publishable key
+configured, i.e. even when `needsDeposit` is false and the wizard's Payment
+step never renders. `booking-wizard.tsx` statically imports
+`DepositPaymentStep`, so `deposit-payment-step.tsx` and, transitively,
+`@stripe/stripe-js` were always part of the `/book` client bundle. The
+default `@stripe/stripe-js` entry point has an import-time side effect: it
+schedules its own `<script src="https://js.stripe.com/...">` injection on a
+microtask right after the module evaluates, independent of whether
+`loadStripe()` is ever called (see `node_modules/@stripe/stripe-js/dist/index.js`,
+the `Promise.resolve().then(() => getStripePromise())` right after
+`loadStripe` is defined). Bundled is not the same as rendered, but for this
+one package it was enough to fire the request.
+
+- **`src/lib/stripe-client.ts` now dynamically imports `@stripe/stripe-js/pure`
+  inside `getStripeClient()`**, only once a real publishable key reaches it.
+  `/pure` has no import-time side effect (script injection happens only
+  when `loadStripe()` is explicitly called), and the dynamic `import()`
+  means the module, and the script tag it eventually injects, are fetched
+  only when `DepositPaymentStep` actually mounts (wizard step 5, only when
+  `needsDeposit` is true). `@stripe/react-stripe-js` does not import
+  `@stripe/stripe-js` itself (checked its bundled dist); it only takes a
+  `stripe` prop, so it does not reintroduce the eager load.
+- **Memoization is unchanged.** The per-key `Map` cache still returns the
+  same promise across re-renders so `<Elements>` never re-initializes;
+  only the promise's origin (dynamic import of the pure loader) changed.
+- **Verification.** With no Stripe env configured, a headless Playwright
+  run of `/book/wave-wellness` (`networkidle` plus a 2s settle) logs zero
+  requests to `js.stripe.com`. With `STRIPE_PUBLISHABLE_KEY` +
+  `STRIPE_SECRET_KEY` set, the same style of run driven through to the
+  Payment step shows `js.stripe.com` requests once `#card-element` mounts,
+  confirming the positive path (Elements still renders, deposit card entry
+  still works) is intact.
+- **A failed load must not strand the button.** `getStripeClient()`'s
+  dynamic import (or the `loadStripe()` call it wraps) can reject -- a
+  network hiccup, or `js.stripe.com` itself unreachable -- and before this
+  fix that rejection was never caught: the promise stayed cached forever
+  (so a retry replayed the same rejection), `<Elements>` never resolved a
+  `stripe` instance (so `DepositForm`'s submit button stuck on "Preparing
+  secure payment..." with no way out), and the rejection surfaced as an
+  uncaught error in the page. `getStripeClient()` now catches the failure,
+  evicts the cached promise so the next call re-attempts the import from
+  scratch, and re-throws so the caller sees it instead of it going
+  unhandled. `DepositPaymentStep` awaits `getStripeClient()` itself (rather
+  than handing the raw promise to `<Elements stripe>`, which has no catch
+  path of its own): on rejection it renders a clear error with a Retry
+  button instead of mounting `<Elements>`/`DepositForm` at all, and Retry
+  re-attempts the load.
+- **Verification.** A headless Playwright run
+  (`scripts/e2e-stripe-load-failure.mjs`) aborts every request to
+  `js.stripe.com` (the same abort every fake-key run in this repo already
+  applies) and confirms the deposit step surfaces the "could not load the
+  secure payment form" error with a Retry button, that Retry re-surfaces
+  the same clean error rather than hanging or duplicating state, and that
+  `page.on("pageerror")` sees zero uncaught exceptions or unhandled
+  rejections through the whole run.

@@ -10,6 +10,15 @@
  * cancel; assert Captured. Skips with a notice if no in-window slot
  * exists (early-morning runs against a Tue-Sat business).
  *
+ * Every HTTP call below goes through page.request (not a plain Node
+ * fetch), so it shares the Playwright page's browser context and cookie
+ * jar. The bookings POST mints the HttpOnly slatewell_visitor cookie
+ * (D-014); confirmation, the .ics download, and the cancel page are all
+ * visitor-scoped and gate their content on that cookie. A bare fetch() has
+ * no cookie jar at all, so it drops the cookie the response sets and every
+ * follow-up request/page-load in this script would otherwise silently hit
+ * the visitor-scope gate instead of the surface it means to test.
+ *
  * Prereqs: server on BASE_URL, seeded db. Usage: node scripts/e2e-cancellation.mjs
  */
 import { chromium } from "playwright";
@@ -30,39 +39,59 @@ const check = (name, ok, detail = "") => {
 const iso = (d) =>
   `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 
-async function getSlots(serviceId, date) {
-  const res = await fetch(
-    `${BASE_URL}/api/book/${SLUG}/availability?serviceId=${serviceId}&date=${date}`
-  );
-  return (await res.json()).slots ?? [];
-}
-
-async function createBooking(serviceId, date, slot, email) {
-  const res = await fetch(`${BASE_URL}/api/book/${SLUG}/bookings`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      serviceId,
-      staffId: slot.staffId,
-      date,
-      time: slot.time,
-      customer: {
-        firstName: "Cancel",
-        lastName: "Tester",
-        email,
-        phone: "(555) 010-4545",
-      },
-    }),
-  });
-  if (res.status !== 201) throw new Error(`booking failed: ${res.status}`);
-  return (await res.json()).id;
-}
+// Headings and status text swap in right after a navigation or a click;
+// asserting isVisible() immediately races the render (same fix as
+// e2e-booking.mjs). Wait for the element to actually appear before
+// recording pass/fail.
+const waitVisible = async (locator, timeout = 10000) => {
+  try {
+    await locator.waitFor({ state: "visible", timeout });
+    return true;
+  } catch {
+    return false;
+  }
+};
 
 const db = new Database(path.join(ROOT, "data", "slatewell.db"), {
   readonly: true,
 });
 const getBooking = (id) =>
   db.prepare("SELECT * FROM bookings WHERE id = ?").get(id);
+
+const browser = await chromium.launch();
+const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+await page.goto(`${BASE_URL}/book/${SLUG}`);
+
+async function getSlots(serviceId, date) {
+  const res = await page.request.get(
+    `${BASE_URL}/api/book/${SLUG}/availability?serviceId=${serviceId}&date=${date}`
+  );
+  return (await res.json()).slots ?? [];
+}
+
+async function createBooking(serviceId, date, slot, email) {
+  const res = await page.request.post(
+    `${BASE_URL}/api/book/${SLUG}/bookings`,
+    {
+      data: {
+        serviceId,
+        staffId: slot.staffId,
+        date,
+        time: slot.time,
+        customer: {
+          firstName: "Cancel",
+          lastName: "Tester",
+          email,
+          phone: "(555) 010-4545",
+        },
+      },
+    }
+  );
+  if (res.status() !== 201) {
+    throw new Error(`booking failed: ${res.status()}`);
+  }
+  return (await res.json()).id;
+}
 
 // Service 1 = Signature Facial (60 min, $25 deposit).
 const SERVICE_ID = 1;
@@ -85,32 +114,31 @@ const idA = await createBooking(SERVICE_ID, dateA, slotA, "cancel.a@example.com"
 const rowA = getBooking(idA);
 check("flow A: deposit Held after booking", rowA.deposit_status === "Held", rowA.deposit_status);
 
-const browser = await chromium.launch();
-const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
-
 // Confirmation page: ICS link, instructions, cancel link.
 await page.goto(`${BASE_URL}/book/${SLUG}/confirmation/${idA}`);
 check(
   "confirmation: ICS download link present",
-  await page.getByRole("link", { name: /Add to calendar/ }).isVisible()
+  await waitVisible(page.getByRole("link", { name: /Add to calendar/ }))
 );
 check(
   "confirmation: instructions section present",
-  await page.getByRole("heading", { name: "Before your visit" }).isVisible()
+  await waitVisible(page.getByRole("heading", { name: "Before your visit" }))
 );
 check(
   "confirmation: cancel link present",
-  await page.getByRole("link", { name: /Cancel or reschedule/ }).isVisible()
+  await waitVisible(page.getByRole("link", { name: /Cancel or reschedule/ }))
 );
 await page.screenshot({ path: path.join(SHOTS, "cancel-1-confirmation.png") });
 
-// ICS content over HTTP.
-const icsRes = await fetch(`${BASE_URL}/book/${SLUG}/confirmation/${idA}/ics`);
+// ICS content over HTTP, through the same browser context (visitor-scoped).
+const icsRes = await page.request.get(
+  `${BASE_URL}/book/${SLUG}/confirmation/${idA}/ics`
+);
 const icsText = await icsRes.text();
-check("ics: HTTP 200", icsRes.status === 200, icsRes.status);
+check("ics: HTTP 200", icsRes.status() === 200, icsRes.status());
 check(
   "ics: content type text/calendar",
-  (icsRes.headers.get("content-type") ?? "").includes("text/calendar")
+  (icsRes.headers()["content-type"] ?? "").includes("text/calendar")
 );
 check("ics: VCALENDAR wrapper", icsText.includes("BEGIN:VCALENDAR") && icsText.includes("END:VCALENDAR"));
 check("ics: VTIMEZONE for America/New_York", icsText.includes("TZID:America/New_York"));
@@ -125,14 +153,13 @@ check("ics: SUMMARY present", icsText.includes("SUMMARY:Signature Facial"));
 await page.goto(`${BASE_URL}/book/${SLUG}/cancel/${idA}?token=deadbeef`);
 check(
   "cancel: wrong token shows clear error",
-  await page.getByText("This link is not valid").isVisible()
+  await waitVisible(page.getByText("This link is not valid"))
 );
-const badRes = await fetch(`${BASE_URL}/api/book/${SLUG}/bookings/${idA}/cancel`, {
-  method: "POST",
-  headers: { "Content-Type": "application/json" },
-  body: JSON.stringify({ token: "deadbeef" }),
-});
-check("cancel API: wrong token 403", badRes.status === 403, badRes.status);
+const badRes = await page.request.post(
+  `${BASE_URL}/api/book/${SLUG}/bookings/${idA}/cancel`,
+  { data: { token: "deadbeef" } }
+);
+check("cancel API: wrong token 403", badRes.status() === 403, badRes.status());
 check(
   "cancel: booking untouched after bad attempts",
   getBooking(idA).status === "Confirmed"
@@ -143,14 +170,14 @@ const tokenA = rowA.cancel_token;
 await page.goto(`${BASE_URL}/book/${SLUG}/cancel/${idA}?token=${tokenA}`);
 check(
   "cancel: free-window notice shown",
-  await page.getByText(/deposit will be released/).isVisible()
+  await waitVisible(page.getByText(/deposit will be released/))
 );
 await page.screenshot({ path: path.join(SHOTS, "cancel-2-confirm.png") });
 await page.getByRole("button", { name: /Yes, cancel appointment/ }).click();
 await page.waitForSelector("text=Your appointment is cancelled", { timeout: 10000 });
 check(
   "cancel: success state shows released deposit",
-  await page.getByText(/deposit has been released/).isVisible()
+  await waitVisible(page.getByText(/deposit has been released/))
 );
 await page.screenshot({ path: path.join(SHOTS, "cancel-3-done.png") });
 
@@ -164,12 +191,11 @@ const commsA = db
 check("flow A: cancellation sms + email logged", commsA.length === 2, JSON.stringify(commsA));
 
 // Double cancel blocked.
-const dupRes = await fetch(`${BASE_URL}/api/book/${SLUG}/bookings/${idA}/cancel`, {
-  method: "POST",
-  headers: { "Content-Type": "application/json" },
-  body: JSON.stringify({ token: tokenA }),
-});
-check("cancel API: double cancel 409", dupRes.status === 409, dupRes.status);
+const dupRes = await page.request.post(
+  `${BASE_URL}/api/book/${SLUG}/bookings/${idA}/cancel`,
+  { data: { token: tokenA } }
+);
+check("cancel API: double cancel 409", dupRes.status() === 409, dupRes.status());
 
 // ---- Flow B: book inside the 24h window ------------------------------------
 
@@ -198,13 +224,13 @@ if (!slotB) {
   await page.goto(`${BASE_URL}/book/${SLUG}/cancel/${idB}?token=${rowB.cancel_token}`);
   check(
     "flow B: kept-deposit warning shown",
-    await page.getByText(/deposit will be kept/).isVisible()
+    await waitVisible(page.getByText(/deposit will be kept/))
   );
   await page.getByRole("button", { name: /Yes, cancel appointment/ }).click();
   await page.waitForSelector("text=Your appointment is cancelled", { timeout: 10000 });
   check(
     "flow B: success state shows kept deposit",
-    await page.getByText(/deposit was kept/).isVisible()
+    await waitVisible(page.getByText(/deposit was kept/))
   );
   await page.screenshot({ path: path.join(SHOTS, "cancel-4-late.png") });
   const cancelledB = getBooking(idB);

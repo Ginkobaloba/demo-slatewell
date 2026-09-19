@@ -54,6 +54,20 @@ surfaces:
       TEST mode only, but a regression here silently breaks or mis-gates
       deposit holds for every deposit-bearing service.
 
+  - name: deposit-intent
+    tier: 3
+    deep_verify_before_merge: true
+    reason: >
+      POST /api/book/[slug]/deposit-intent (src/app/api/book/[slug]/deposit-intent/route.ts)
+      creates the unconfirmed manual-capture PaymentIntent that the card step
+      confirms with the customer's card. It is the entry point to the same
+      Stripe deposit-hold path booking-flow covers, and it decides the exact
+      amount and currency Stripe authorizes before any card is entered. A
+      regression here can authorize the wrong amount, hand out a client_secret
+      for someone else's slot, or leave a card charged against a booking that
+      never gets written. PARADIGM_VELOCITY_RULES.md classes payments as
+      Tier-3, same basis as booking-flow.
+
   - name: home
     tier: 1
     deep_verify_before_merge: false

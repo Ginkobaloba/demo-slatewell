@@ -20,22 +20,44 @@ const check = (name, ok, detail = "") => {
   if (!ok) failures++;
 };
 
+// Each wizard step swaps in a new heading right after a navigation or a
+// click; asserting isVisible() immediately races the render. Wait for the
+// heading to actually appear (or time out) before recording pass/fail, so a
+// slow-but-correct render never reads as a failure.
+const waitVisible = async (locator, timeout = 10000) => {
+  try {
+    await locator.waitFor({ state: "visible", timeout });
+    return true;
+  } catch {
+    return false;
+  }
+};
+
 const browser = await chromium.launch();
 const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
 
 await page.goto(`${BASE_URL}/book/wave-wellness`);
+check(
+  "services step renders",
+  await waitVisible(page.getByText("Choose a service"))
+);
 await page.screenshot({ path: path.join(SHOTS, "book-1-services.png") });
-check("services step renders", await page.getByText("Choose a service").isVisible());
 
 // Skin Consultation has no deposit, so this exercises the direct
 // confirm path and the calendar-of-record claim without card entry.
 // The deposit + card-entry path is covered by e2e-deposit-ui.mjs.
 await page.getByRole("button", { name: /Skin Consultation/ }).click();
+check(
+  "staff step renders",
+  await waitVisible(page.getByText("Choose your practitioner"))
+);
 await page.screenshot({ path: path.join(SHOTS, "book-2-staff.png") });
-check("staff step renders", await page.getByText("Choose your practitioner").isVisible());
 
 await page.getByRole("button", { name: /First available/ }).click();
-check("date step renders", await page.getByText("Pick a date and time").isVisible());
+check(
+  "date step renders",
+  await waitVisible(page.getByText("Pick a date and time"))
+);
 
 // Click the first enabled date chip, then wait for slots.
 await page.locator('[role="option"]:not([disabled])').first().click();
@@ -47,7 +69,10 @@ const slotCount = await slotButtons.count();
 check("time slots offered", slotCount > 0, `count=${slotCount}`);
 await slotButtons.first().click();
 
-check("details step renders", await page.getByText("Your details").isVisible());
+check(
+  "details step renders",
+  await waitVisible(page.getByText("Your details"))
+);
 await page.fill("#firstName", "Elise");
 await page.fill("#lastName", "Vandermeer");
 await page.fill("#email", "elise.vandermeer@example.com");
@@ -55,18 +80,21 @@ await page.fill("#phone", "(555) 010-8841");
 await page.screenshot({ path: path.join(SHOTS, "book-4-details.png") });
 await page.getByRole("button", { name: "Review booking" }).click();
 
-check("review step renders", await page.getByText("Review and confirm").isVisible());
+check(
+  "review step renders",
+  await waitVisible(page.getByText("Review and confirm"))
+);
 await page.screenshot({ path: path.join(SHOTS, "book-5-review.png") });
 await page.getByRole("button", { name: "Confirm booking" }).click();
 
 await page.waitForURL(/\/confirmation\/bk_/, { timeout: 15000 });
 const bookingId = page.url().split("/").pop();
 check("confirmation page reached", /^bk_/.test(bookingId), page.url());
-await page.screenshot({ path: path.join(SHOTS, "book-6-confirmation.png") });
 check(
   "confirmation greets customer",
-  await page.getByText(/You're booked, Elise/).isVisible()
+  await waitVisible(page.getByText(/You're booked, Elise/))
 );
+await page.screenshot({ path: path.join(SHOTS, "book-6-confirmation.png") });
 
 await browser.close();
 
