@@ -448,4 +448,85 @@ to refuse it regardless.
   refused by the Edge middleware (page redirect, API 401), by the page guard
   (`authorizeAdmin`), and by three real API handlers (`requireAdminApi`),
   that none of the rejected calls mutate the database, and that a normally
-  minted session still passes every guard.
+  minted session still passes every guard. (D-019 extended this section's
+  API coverage from three handlers to all five.)
+
+## D-019: Admin session lifetime is bound by value, not just presence (2026-09-19)
+
+W1 from the #38 deep verify: D-018's `requiredClaims: ["exp", "iat", "jti"]`
+only checks that those claims are *present*; it does not check that their
+*values* make sense. `jose`'s `jwtVerify` validates `iat`'s value against
+the clock only when the caller passes `maxTokenAge` (this code did not),
+and it never relates `exp` to `iat` at all, at any settings. A holder of
+`SESSION_SECRET` could still hand-sign a token that passes every existing
+check -- HS256 signature, `exp`/`iat`/`jti` present, `jti`/`vid`/`src`/`sub`
+shaped correctly -- with `exp` decades out, `iat` in the future, `iat`
+after `exp`, `iat` at or before the Unix epoch, or a fractional `exp` or
+`iat`.
+
+- **Fix.** `verifyAdminSession()` (`src/lib/admin-session.ts`) now passes
+  `maxTokenAge: SESSION_TTL_SECONDS` to `jwtVerify` (the same 8-hour
+  constant `mintAdminSession()` uses, not a second copy), which makes
+  `jose` itself refuse an `iat` more than the TTL in the past or an `iat`
+  in the future at all (zero clock tolerance). On top of that, an explicit
+  check after `jwtVerify` returns requires `exp - iat` to be a positive
+  integer no greater than `SESSION_TTL_SECONDS`, and rejects a fractional
+  `exp` or `iat` outright. The two checks cover different gaps:
+  `maxTokenAge` bounds `iat` against "now" but never looks at `exp` at
+  all, so it would not by itself catch a token minted this second with
+  `exp` set 100 years out; the explicit `exp - iat` check catches that, and
+  the fractional-claim case `jose` accepts as long as the number is finite.
+  `iat` after `exp` and `iat` at/before the epoch are refused by both
+  layers for different reasons (see the code comment on
+  `verifyAdminSession` for the detail), which is intentional
+  defense-in-depth rather than redundant.
+- **No clock tolerance added.** Mint and verify both read `Date.now()` in
+  the same process, so there is no cross-host clock skew to absorb, and
+  nothing else in this codebase sets `clockTolerance`. Adding one here
+  would only reopen a few seconds of exactly the slack this fix closes (a
+  session minted a few seconds "in the future", or one that outlives its
+  TTL by the tolerance window), for no compensating benefit -- so
+  `verifyAdminSession` keeps `jose`'s default of zero.
+- **Every existing check is unchanged.** The HS256 algorithm pin,
+  `requiredClaims`, the post-verify shape check (`jti`/`vid`/`src`/`sub`),
+  the visitor binding (`checkAdminCookies`), and sign-out revocation
+  (`authorizeAdmin`, D-015) all run exactly as before; this fix only adds
+  checks, in the same function D-018 already lives in, so the Edge
+  middleware, the page guard, and every API guard close at once as usual.
+- **Reach.** Same as D-018: `verifyAdminSession` is the one place the Edge
+  middleware, `authorizeAdmin` (page guard), and `requireAdminApi` (API
+  guard) all verify a session, so no caller needed its own change.
+- **Verification.** `test:admin-session` hand-signs tokens (correct HS256
+  signature, valid `jti`/`vid`/`src`/`sub`, only `exp`/`iat` hostile) for
+  each shape above -- `exp` 100 years out, `iat` in the future, `iat`
+  after `exp` both future and already-expired, `iat` at the epoch,
+  negative `iat`, fractional `exp`, fractional `iat`, zero lifetime, and
+  one second over the TTL -- and confirms `verifyAdminSession` rejects
+  every one, plus a positive control at the exact TTL boundary (`exp -
+  iat === SESSION_TTL_SECONDS`) and an ordinary short-lived token, both
+  accepted. `test:admin-security` signs the same hostile tokens bound to a
+  real visitor cookie and confirms each is refused by the Edge middleware
+  (page redirect, API 401), the page guard (`authorizeAdmin`), and all
+  five real API handlers (`requireAdminApi`; this section and D-018's 5b
+  section now share one `allAdminApis` helper covering `complete`,
+  `no-show`, `services POST`, `services/[id] PUT`, and `staff/[id] PUT`),
+  that none of the rejected calls mutate the database, that the TTL
+  boundary token still passes the page guard and middleware, and that
+  sign-out of a normally minted session still revokes it (section 9,
+  unchanged by this fix).
+- **W2 coverage gap closed too (#38 deep verify).** D-018's 5b section
+  only exercised three of the five admin API handlers (missing `no-show`
+  and `services/[id] PUT`). Both sections now use the same
+  five-handler `allAdminApis` helper, so the missing-claim (D-018) and
+  bad-lifetime (D-019) cases cover all five.
+- **Mutation check.** Removing the explicit `exp - iat` bound (keeping
+  `maxTokenAge`) turned 4 `test:admin-session` checks and 25
+  `test:admin-security` checks red (the "decades out", both fractional,
+  and "one second over the TTL" cases, plus the downstream
+  data-mutation checks). Removing `maxTokenAge` (keeping the explicit
+  bound) turned 1 `test:admin-session` check and 10 `test:admin-security`
+  checks red (only "`iat` in the future" with an otherwise-in-bounds
+  `exp - iat`, since the explicit bound alone does not check `iat`
+  against "now"). Both mutations were reverted; the file matched its
+  pre-mutation state byte for byte afterward and the full suite was green
+  again.
