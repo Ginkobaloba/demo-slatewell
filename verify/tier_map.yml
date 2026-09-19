@@ -39,14 +39,20 @@ surfaces:
       portal-shell.
 
   - name: booking-flow
-    tier: 2
-    deep_verify_before_merge: false
+    tier: 3
+    deep_verify_before_merge: true
     reason: >
-      Customer-facing booking wizard: data is written to SQLite (bookings table)
-      and Stripe Test Mode is called for deposit holds. Moderate stakes because
-      errors here affect demo fidelity, but nothing real is charged and the
-      database resets on redeploy. Deep verify recommended before shipping UI
-      changes; not a hard gate.
+      Customer-facing booking wizard plus the deposit PAYMENT path: the Stripe
+      publishable-key delivery and card step (src/lib/stripe*.ts,
+      src/components/booking/deposit-payment-step.tsx), deposit holds and
+      settlement (src/lib/deposits.ts), and the API routes
+      /api/book/[slug]/deposit-intent, /api/book/[slug]/bookings and
+      /api/book/[slug]/bookings/[bookingId]/cancel. PARADIGM_VELOCITY_RULES.md
+      classes payments as Tier-3, so a deep verify is required before merge.
+      Raised from tier 2 on 2026-09-18: at tier 2, PR #27 (deposit card step)
+      skipped Deep Verify because nothing forced the tier-3 label. Stripe is
+      TEST mode only, but a regression here silently breaks or mis-gates
+      deposit holds for every deposit-bearing service.
 
   - name: home
     tier: 1
