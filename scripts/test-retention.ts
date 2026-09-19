@@ -8,6 +8,9 @@
  * (with their mock messages and orphaned customers), and leaves seed rows,
  * recent visitor rows, and pre-D-014 legacy rows alone. Also checks the
  * hourly throttle and the schema upgrade for an older database.
+ * D-015: sign-out revocation rows are kept until the token's own expiry and
+ * purged after it (by the same hourly purge), and the revocation table is
+ * created on a database seeded before D-015.
  */
 import Database from "better-sqlite3";
 import fs from "fs";
@@ -19,6 +22,12 @@ import {
   maybePurgeExpiredVisitorData,
   purgeExpiredVisitorData,
 } from "../src/lib/retention";
+import {
+  ensureRevocationTable,
+  isAdminSessionRevoked,
+  purgeExpiredRevocations,
+  revokeAdminSession,
+} from "../src/lib/session-revocation";
 
 const failures: string[] = [];
 let passed = 0;
@@ -135,6 +144,53 @@ const exists = (db: Database.Database, table: string, id: string | number) =>
     seeded: number; visitor_id: string | null;
   };
   check("upgrade: existing rows become hidden legacy rows (seeded 0, no visitor)", row.seeded === 0 && row.visitor_id === null, row);
+}
+
+// D-015: revoked admin sessions expire along with the token.
+{
+  const db = makeDb();
+  check("revocation: table ships in schema.sql",
+    db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='revoked_admin_sessions'").get() !== undefined);
+  const nowSec = Math.floor(NOW.getTime() / 1000);
+  const J_LIVE = "a".repeat(32);
+  const J_DEAD = "d".repeat(32);
+  const J_EDGE = "e".repeat(32);
+  revokeAdminSession(db, J_LIVE, nowSec + 3600, nowSec - 60);
+  revokeAdminSession(db, J_DEAD, nowSec - 1, nowSec - 7200);
+  revokeAdminSession(db, J_EDGE, nowSec, nowSec - 7200);
+  revokeAdminSession(db, J_LIVE, nowSec + 3600, nowSec - 30); // idempotent
+  check("revocation: idempotent insert",
+    (db.prepare("SELECT COUNT(*) AS n FROM revoked_admin_sessions WHERE jti = ?").get(J_LIVE) as { n: number }).n === 1);
+  check("revocation: live session reads as revoked", isAdminSessionRevoked(db, J_LIVE));
+  check("revocation: unknown jti is not revoked", !isAdminSessionRevoked(db, "b".repeat(32)));
+
+  const result = purgeExpiredVisitorData(db, NOW);
+  check("revocation purge: counted in the visitor purge", result.revocations === 1, result);
+  check("revocation purge: row past its token expiry removed", !isAdminSessionRevoked(db, J_DEAD));
+  check("revocation purge: row whose token expires this second kept", isAdminSessionRevoked(db, J_EDGE));
+  check("revocation purge: row for a still-valid token kept", isAdminSessionRevoked(db, J_LIVE));
+  check("revocation purge: later purge removes the rest once expired",
+    purgeExpiredRevocations(db, nowSec + 3601) === 2 && !isAdminSessionRevoked(db, J_LIVE));
+
+  // revokeAdminSession also sweeps expired rows opportunistically.
+  revokeAdminSession(db, J_DEAD, nowSec - 1, nowSec - 7200);
+  revokeAdminSession(db, J_LIVE, nowSec + 3600, nowSec);
+  check("revocation: insert sweeps already-expired rows", !isAdminSessionRevoked(db, J_DEAD) && isAdminSessionRevoked(db, J_LIVE));
+}
+
+// D-015: the revocation table is created on a pre-D-015 database, and the
+// purge tolerates a handle that has no such table.
+{
+  const db = new Database(":memory:");
+  db.exec(`CREATE TABLE customers (id INTEGER PRIMARY KEY, created_at TEXT, visitor_id TEXT);
+           CREATE TABLE bookings (id TEXT PRIMARY KEY, created_at TEXT, customer_id INTEGER, visitor_id TEXT, seeded INTEGER NOT NULL DEFAULT 0);
+           CREATE TABLE communications (id INTEGER PRIMARY KEY, booking_id TEXT, customer_id INTEGER);`);
+  const bare = purgeExpiredVisitorData(db, NOW);
+  check("upgrade: purge works before the revocation table exists", bare.revocations === 0, bare);
+  ensureRevocationTable(db);
+  ensureRevocationTable(db); // idempotent
+  revokeAdminSession(db, "f".repeat(32), Math.floor(NOW.getTime() / 1000) + 60, Math.floor(NOW.getTime() / 1000));
+  check("upgrade: revocation table created and usable", isAdminSessionRevoked(db, "f".repeat(32)));
 }
 
 console.log(`retention: ${passed} passed, ${failures.length} failed`);

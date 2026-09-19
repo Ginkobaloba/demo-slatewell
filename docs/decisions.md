@@ -252,3 +252,96 @@ into the booking form. Decisions:
 - **Verification.** `test:admin-session`, `test:admin-security`,
   `test:admin-queries`, `test:retention`, `test:portal-handoff`, and the
   two-browser `e2e:visitor-scope` against `next start`.
+
+## D-015: Sign-out revokes the admin session server-side (2026-09-19)
+
+Follow-up from the PR #29 deep verify. The D-014 session is a stateless
+HS256 JWT, and sign-out only deleted the cookie, so a captured session +
+visitor cookie pair kept working for the rest of its 8-hour lifetime.
+
+- **Revocation list, not a session table.** Sign-out verifies the session
+  cookie (signature and expiry, not the visitor binding, so a browser that
+  lost its visitor cookie can still kill its session) and records its `jti`
+  in `revoked_admin_sessions` (`src/lib/session-revocation.ts`). A forged or
+  expired token is never written, so the table cannot be filled with junk.
+  Sign-out is idempotent.
+- **Rows expire with the token.** Each row stores the token's own `exp` as
+  Unix epoch seconds (a token attribute, so D-003's local ISO strings do not
+  apply). Once `exp` has passed, `jwtVerify` rejects the token on its own, so
+  the row is purged: on every revoke, and in the hourly purge that already
+  runs for visitor data (`src/lib/retention.ts`).
+- **One authoritative Node guard.** The middleware runs in the Edge runtime
+  and cannot reach SQLite, so it still passes a signed-out pair. The
+  authoritative check is `authorizeAdmin()` in `src/lib/admin-auth.ts`: the
+  stateless cookie check, then the revocation lookup. `requireAdminApi`
+  (every admin API handler) and `requireAdminPage` (the admin layout and
+  every admin page, including the four preview pages that used to rely on
+  the layout alone, since Next renders layout and page in parallel) both go
+  through it. A database error propagates as a failed request, never as
+  "not revoked".
+- **Mechanical coverage.** `test:admin-security` walks `src/app/admin` and
+  `src/app/api/admin` and fails if any page or layout stops awaiting
+  `requireAdminPage()`, if any exported admin API handler (other than the
+  sign-in endpoint) stops calling `requireAdminApi` first, or if any of them
+  opts into the Edge runtime.
+- **Schema.** The table is in `src/db/schema.sql`, and `getDb()` creates it
+  on a database seeded before this change.
+- **Not in scope.** "Sign out everywhere" and admin-initiated revocation;
+  revocation is per session. A secret rotation still invalidates every
+  session at once.
+
+## D-016: The visitor cookie is signed (2026-09-19)
+
+Follow-up from the PR #29 deep verify. The D-014 visitor cookie was 128
+random bits, HttpOnly, but unsigned, so its value alone was a bearer token
+for that browser's bookings and admin scope.
+
+- **Format.** `slatewell_visitor=<32 hex id>.<43 char base64url tag>`, where
+  `tag = HMAC-SHA-256(visitorKey, id)`. The database and the admin JWT's
+  `vid` claim keep the bare id.
+- **Key derivation and domain separation.** `visitorKey =
+  HMAC-SHA-256(SESSION_SECRET, "slatewell:visitor-cookie:v1")`. The admin
+  JWT stays keyed by the raw secret (so live admin sessions survive the
+  deploy), which means the visitor tag and a session signature are always
+  computed under different keys, and the label's version lets a future
+  format change retire every old cookie at once. Web Crypto only
+  (`crypto.subtle`), because the Edge middleware verifies it too.
+- **Verification.** `crypto.subtle.verify` (constant-time), and only the
+  canonical base64url spelling of the tag is accepted (the last character
+  has 2 spare bits, which would otherwise let a second spelling verify).
+- **Untrusted cookies are never trusted, only replaced.** An unsigned,
+  tampered, malformed, or foreign-secret visitor cookie reads as "no
+  visitor". Read paths (confirmation page, `.ics`, the admin gate) treat it
+  that way: 404, 404, and unauthenticated. Write paths that mint a visitor
+  (booking POST, demo sign-in, Portal handoff) issue a fresh signed visitor
+  instead of adopting the claimed id.
+- **Existing cookies become new visitors.** Every pre-D-016 cookie is
+  unsigned, so after deploy each browser gets a new visitor id on its next
+  booking or sign-in and loses sight of its earlier demo bookings and any
+  admin session bound to the old id. Accepted: visitor data expires within
+  about a day (D-014 retention), the data is demo data, and the alternative
+  (grandfathering unsigned ids) would keep the bearer-token hole open.
+- **No usable SESSION_SECRET.** Consistent with D-014's fail-closed rule,
+  with no key nothing can be signed or verified, so any visitor cookie would
+  be a bearer token again. Then: booking POST and deposit-intent answer 503
+  ("Online booking is temporarily unavailable.") before any Stripe work, so
+  no card hold is ever stranded; confirmation and `.ics` answer 404; no
+  visitor cookie is ever set; the admin area stays 404 as in D-014. The
+  landing page, booking wizard, availability, and the cancel flow (its own
+  128-bit `cancel_token`, D-007) are unaffected. There is still no dev
+  fallback secret; `.env.example` says booking needs one too.
+- **E2E in production mode.** The production image sets Secure cookies, and
+  Playwright's `APIRequestContext` (`context.request`) does not send Secure
+  cookies to `http://127.0.0.1`, so `scripts/e2e-visitor-scope.mjs` failed
+  its `.ics` check against the container. The script now makes every call
+  through the page (navigation or in-page `fetch`, as the real app does),
+  reads cookies with `context.cookies()` unfiltered (a URL filter drops
+  Secure cookies on http), and can read a container's database via
+  `E2E_DB_CONTAINER`. Cookie security was not relaxed.
+- **Verification.** `test:admin-session` (format, tamper, unsigned,
+  foreign secret, non-canonical tag, key separation, fail closed),
+  `test:admin-security` (fresh visitor on every untrusted cookie, 503/404
+  without a secret, revocation on all five admin APIs and the page guard,
+  route coverage walk), `test:portal-handoff`, `test:retention` (revocation
+  expiry), and `e2e:visitor-scope` against `next start` and the production
+  image.

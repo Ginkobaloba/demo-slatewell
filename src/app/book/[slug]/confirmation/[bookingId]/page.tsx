@@ -28,7 +28,9 @@ export default async function ConfirmationPage(
   // D-014: only the browser that made the booking can open this page. It
   // shows the customer's name and embeds the cancel token, and booking ids
   // are short enough to guess, so an id alone is not enough.
-  const visitorId = readVisitorId(await cookies());
+  // D-016: the visitor cookie must carry a valid signature; an unsigned or
+  // tampered one reads as no visitor at all.
+  const visitorId = await readVisitorId(await cookies());
   if (
     !booking ||
     booking.business_slug !== params.slug ||

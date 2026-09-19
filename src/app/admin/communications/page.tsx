@@ -1,10 +1,16 @@
 import type { Metadata } from "next";
 import { MessageSquare } from "lucide-react";
 import { SectionPreview } from "@/components/admin/section-preview";
+import { requireAdminPage } from "@/lib/admin-auth";
+
+// Every admin page authorizes itself (D-014, D-015); the layout check is
+// not enough on its own, because Next renders layout and page in parallel.
+export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = { title: "Communications" };
 
-export default function CommunicationsPage() {
+export default async function CommunicationsPage() {
+  await requireAdminPage();
   return (
     <SectionPreview
       icon={MessageSquare}

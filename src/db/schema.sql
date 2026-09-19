@@ -139,3 +139,15 @@ CREATE TABLE IF NOT EXISTS communications (
 );
 
 CREATE INDEX IF NOT EXISTS idx_comms_sent ON communications(business_id, sent_at);
+
+-- Server-side sign-out (D-015). A signed-out admin session's jti stays here
+-- until the token's own expiry (exp, Unix epoch seconds: a token attribute,
+-- not a business timestamp), and the Node-side admin guard refuses it.
+-- getDb() also creates this table on databases seeded before D-015.
+CREATE TABLE IF NOT EXISTS revoked_admin_sessions (
+  jti TEXT PRIMARY KEY,
+  exp INTEGER NOT NULL,
+  revoked_at INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_revoked_admin_sessions_exp ON revoked_admin_sessions(exp);

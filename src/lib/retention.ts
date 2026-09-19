@@ -1,4 +1,5 @@
 import type { Database } from "better-sqlite3";
+import { purgeExpiredRevocations } from "@/lib/session-revocation";
 
 /**
  * Visitor data expiry and the schema upgrade it depends on (D-014).
@@ -62,6 +63,8 @@ export interface PurgeResult {
   bookings: number;
   customers: number;
   communications: number;
+  /** Sign-out revocations whose token has expired (D-015). */
+  revocations: number;
 }
 
 /**
@@ -101,7 +104,19 @@ export function purgeExpiredVisitorData(
       .prepare(`DELETE FROM customers WHERE id IN (${expiredCustomers})`)
       .run({ cutoff }).changes;
 
-    return { bookings, customers, communications };
+    // D-015: a revoked session row is only needed until its token expires.
+    // The table exists on every handle getDb() opens; guard for bare
+    // handles built from an older schema (tests, one-off scripts).
+    const hasRevocations = db
+      .prepare(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'revoked_admin_sessions'",
+      )
+      .get();
+    const revocations = hasRevocations
+      ? purgeExpiredRevocations(db, Math.floor(now.getTime() / 1000))
+      : 0;
+
+    return { bookings, customers, communications, revocations };
   });
   return run();
 }
@@ -124,9 +139,14 @@ export function maybePurgeExpiredVisitorData(
   globalThis.__slatewellLastPurgeMs = nowMs;
   try {
     const result = purgeExpiredVisitorData(db, new Date(nowMs));
-    if (result.bookings || result.customers || result.communications) {
+    if (
+      result.bookings ||
+      result.customers ||
+      result.communications ||
+      result.revocations
+    ) {
       console.log(
-        `[retention] purged ${result.bookings} bookings, ${result.customers} customers, ${result.communications} messages`,
+        `[retention] purged ${result.bookings} bookings, ${result.customers} customers, ${result.communications} messages, ${result.revocations} expired revocations`,
       );
     }
     return result;

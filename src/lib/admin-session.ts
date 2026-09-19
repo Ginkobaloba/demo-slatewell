@@ -10,12 +10,22 @@ import { SignJWT, jwtVerify, type JWTPayload } from "jose";
  * the signature verifies AND `vid` matches that browser's visitor cookie, so
  * a copied session cookie is useless without the matching visitor cookie.
  *
+ * The visitor cookie itself is signed too (D-016): `<id>.<tag>`, where the
+ * tag is HMAC-SHA-256 under a key derived from SESSION_SECRET with its own
+ * label, so it can never be confused with an admin session signature. A
+ * visitor cookie that does not verify is treated as absent.
+ *
  * This module is Edge-safe on purpose (jose + Web Crypto only, no node
  * `crypto`, no database): the middleware and the Node route handlers share
- * it, so the check is identical in both places.
+ * it, so the check is identical in both places. Because the Edge runtime
+ * cannot reach SQLite, sign-out revocation (D-015) is enforced one layer
+ * down, in src/lib/admin-auth.ts; the middleware check here is necessary but
+ * not sufficient.
  *
  * Fail closed: without a usable SESSION_SECRET nothing can be minted or
- * verified, and callers answer 404 for the whole admin area.
+ * verified, and callers answer 404 for the whole admin area. No visitor
+ * cookie can be minted or verified either (see D-016 for what that means for
+ * the public booking flow).
  */
 
 export const ADMIN_SESSION_COOKIE = "slatewell_admin_session";
@@ -133,6 +143,118 @@ export function isValidVisitorId(value: unknown): value is string {
   return typeof value === "string" && VISITOR_ID_RE.test(value);
 }
 
+// --- signed visitor cookie (D-016) ------------------------------------------
+
+/**
+ * Label for the visitor-cookie key. The admin JWT is keyed by the raw secret;
+ * the visitor key is HMAC(secret, this label), so a visitor tag and an admin
+ * session signature are computed under different keys. The version lets a
+ * future format change retire every old cookie at once.
+ */
+export const VISITOR_KEY_LABEL = "slatewell:visitor-cookie:v1";
+
+/** `<32 hex id>.<43 char base64url HMAC-SHA-256 tag>`. */
+const SIGNED_VISITOR_RE = /^([0-9a-f]{32})\.([A-Za-z0-9_-]{43})$/;
+
+const textEncoder = new TextEncoder();
+
+let visitorKeyCache: { secret: string; key: Promise<CryptoKey> } | null = null;
+
+function toBase64Url(bytes: Uint8Array): string {
+  let bin = "";
+  for (const b of bytes) bin += String.fromCharCode(b);
+  return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+function fromBase64Url(value: string): Uint8Array<ArrayBuffer> {
+  const bin = atob(value.replace(/-/g, "+").replace(/_/g, "/"));
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
+/**
+ * The HMAC key for visitor cookies, or null when SESSION_SECRET is unusable.
+ * Derived once per secret value and cached (the secret only changes in
+ * tests, or on a restart with a rotated env file).
+ */
+async function getVisitorKey(): Promise<CryptoKey | null> {
+  const secret = getSessionSecret();
+  if (!secret) return null;
+  const secretText = new TextDecoder().decode(secret);
+  if (visitorKeyCache?.secret !== secretText) {
+    const subtle = globalThis.crypto.subtle;
+    const key = (async () => {
+      const root = await subtle.importKey(
+        "raw",
+        secret as Uint8Array<ArrayBuffer>,
+        { name: "HMAC", hash: "SHA-256" },
+        false,
+        ["sign"],
+      );
+      const derived = new Uint8Array(
+        await subtle.sign("HMAC", root, textEncoder.encode(VISITOR_KEY_LABEL)),
+      );
+      return subtle.importKey(
+        "raw",
+        derived,
+        { name: "HMAC", hash: "SHA-256" },
+        false,
+        ["sign", "verify"],
+      );
+    })();
+    visitorKeyCache = { secret: secretText, key };
+  }
+  return visitorKeyCache.key;
+}
+
+/**
+ * The signed cookie value for a visitor id, or null when the admin/visitor
+ * secret is not configured (callers then refuse to mint a visitor at all).
+ */
+export async function signVisitorId(visitorId: string): Promise<string | null> {
+  if (!isValidVisitorId(visitorId)) throw new Error("Invalid visitor id");
+  const key = await getVisitorKey();
+  if (!key) return null;
+  const tag = new Uint8Array(
+    await globalThis.crypto.subtle.sign("HMAC", key, textEncoder.encode(visitorId)),
+  );
+  return `${visitorId}.${toBase64Url(tag)}`;
+}
+
+/**
+ * The visitor id carried by a signed cookie value, or null for anything
+ * else: absent, unsigned (the pre-D-016 bare hex format), tampered, signed
+ * under another secret, malformed, or no usable secret. The tag is checked
+ * with crypto.subtle.verify, which compares in constant time.
+ */
+export async function verifyVisitorCookie(
+  value: string | undefined | null,
+): Promise<string | null> {
+  if (!value) return null;
+  const match = SIGNED_VISITOR_RE.exec(value);
+  if (!match) return null;
+  const key = await getVisitorKey();
+  if (!key) return null;
+  const [, visitorId, tag] = match;
+  let tagBytes: Uint8Array<ArrayBuffer>;
+  try {
+    tagBytes = fromBase64Url(tag);
+  } catch {
+    return null;
+  }
+  // Canonical encoding only: the last base64url char carries 2 unused bits,
+  // so without this a tag with those bits flipped would also verify.
+  if (tagBytes.length !== 32 || toBase64Url(tagBytes) !== tag) return null;
+  const ok = await globalThis.crypto.subtle.verify(
+    "HMAC",
+    key,
+    tagBytes,
+    textEncoder.encode(visitorId),
+  );
+  return ok ? visitorId : null;
+}
+
 /**
  * Mint a session bound to `visitorId`. Throws if the admin area is not
  * configured; callers check isAdminConfigured() first and answer 404.
@@ -207,9 +329,13 @@ export type AdminCheck =
   | { status: "unauthenticated" };
 
 /**
- * The single admin gate used by middleware, admin pages, and admin APIs:
- * a valid signature AND a session whose visitor id equals this browser's
- * visitor cookie.
+ * The stateless part of the admin gate, shared by middleware, admin pages,
+ * and admin APIs: a valid session signature AND a validly signed visitor
+ * cookie whose id equals the session's `vid`.
+ *
+ * It cannot see sign-out revocation (D-015), which lives in SQLite. Node
+ * code must authorize through authorizeAdmin() in src/lib/admin-auth.ts,
+ * which calls this and then checks the revocation table.
  */
 export async function checkAdminCookies(
   cookies: CookieReader,
@@ -218,8 +344,9 @@ export async function checkAdminCookies(
   const session = await verifyAdminSession(
     cookies.get(ADMIN_SESSION_COOKIE)?.value,
   );
-  const visitorId = cookies.get(VISITOR_COOKIE)?.value;
-  if (!session || !isValidVisitorId(visitorId) || session.vid !== visitorId) {
+  if (!session) return { status: "unauthenticated" };
+  const visitorId = await verifyVisitorCookie(cookies.get(VISITOR_COOKIE)?.value);
+  if (!visitorId || session.vid !== visitorId) {
     return { status: "unauthenticated" };
   }
   return { status: "ok", visitorId, session };
