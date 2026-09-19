@@ -5,7 +5,8 @@
  *   npx tsx scripts/test-admin-session.ts
  *
  * Covers mint/verify round trip, tamper and wrong-secret rejection, expiry,
- * the visitor binding, the forged "right name, no signature" cookie, and the
+ * the visitor binding, the forged "right name, no signature" cookie, a
+ * validly signed token missing exp/iat/jti (W2, #35 deep verify), and the
  * fail-closed secret rules (missing, short, published placeholder, and the
  * mangled-env-line rules: whitespace, path fragments, "generated " prefix,
  * logged by rule name without the value).
@@ -108,6 +109,44 @@ async function main() {
     .setExpirationTime(now - 60)
     .sign(new TextEncoder().encode(SECRET));
   check("expired token rejected", (await verifyAdminSession(expired)) === null);
+
+  // --- W2 (#35 deep verify): exp/iat/jti are each required -----------------
+  // The app never mints a session without all three, but a holder of
+  // SESSION_SECRET could sign one by hand. requiredClaims must refuse it.
+  const claimJti = randomId128();
+  const missingExp = await new SignJWT({ vid: VISITOR_A, src: "demo", role: "staff" })
+    .setProtectedHeader({ alg: "HS256" })
+    .setJti(claimJti)
+    .setSubject("demo-admin")
+    .setIssuedAt(now)
+    .sign(new TextEncoder().encode(SECRET));
+  check("signed token without exp rejected", (await verifyAdminSession(missingExp)) === null);
+
+  const missingIat = await new SignJWT({ vid: VISITOR_A, src: "demo", role: "staff" })
+    .setProtectedHeader({ alg: "HS256" })
+    .setJti(claimJti)
+    .setSubject("demo-admin")
+    .setExpirationTime(now + 60)
+    .sign(new TextEncoder().encode(SECRET));
+  check("signed token without iat rejected", (await verifyAdminSession(missingIat)) === null);
+
+  const missingJti = await new SignJWT({ vid: VISITOR_A, src: "demo", role: "staff" })
+    .setProtectedHeader({ alg: "HS256" })
+    .setSubject("demo-admin")
+    .setIssuedAt(now)
+    .setExpirationTime(now + 60)
+    .sign(new TextEncoder().encode(SECRET));
+  check("signed token without jti rejected", (await verifyAdminSession(missingJti)) === null);
+
+  // Positive control: all three present, still accepted.
+  const allThree = await new SignJWT({ vid: VISITOR_A, src: "demo", role: "staff" })
+    .setProtectedHeader({ alg: "HS256" })
+    .setJti(claimJti)
+    .setSubject("demo-admin")
+    .setIssuedAt(now)
+    .setExpirationTime(now + 60)
+    .sign(new TextEncoder().encode(SECRET));
+  check("signed token with exp/iat/jti present accepted", (await verifyAdminSession(allThree)) !== null);
 
   // --- signed visitor cookie (D-016) --------------------------------------
   const B64URL = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";

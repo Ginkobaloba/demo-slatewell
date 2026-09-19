@@ -292,7 +292,11 @@ export async function mintAdminSession(args: {
 /**
  * Verify a session token's signature, expiry, and claim shape. Returns null
  * on any failure (including an unconfigured secret) so callers need not
- * catch. Does NOT check the visitor binding; use checkAdminCookies for that.
+ * catch. `requiredClaims` rejects a token missing `exp`, `iat`, or `jti`
+ * outright (W2, #35 deep verify): the app never mints one without all
+ * three, but a holder of SESSION_SECRET could sign one by hand, and a
+ * non-expiring or revocation-proof (no `jti`) session must never verify.
+ * Does NOT check the visitor binding; use checkAdminCookies for that.
  */
 export async function verifyAdminSession(
   token: string | undefined | null,
@@ -302,6 +306,7 @@ export async function verifyAdminSession(
   try {
     const { payload } = await jwtVerify(token, secret, {
       algorithms: ["HS256"],
+      requiredClaims: ["exp", "iat", "jti"],
     });
     if (
       typeof payload.jti !== "string" ||
