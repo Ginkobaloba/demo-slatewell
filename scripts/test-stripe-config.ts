@@ -8,11 +8,16 @@
  *     the NEXT_PUBLIC_ fallback, whitespace trimmed, non-pk_test_ rejected
  *   - isDepositCardFlowEnabled: requires BOTH the secret and publishable key
  *   - getStripeClient: null key -> null, per-key memoization
+ *   - secret key guard: only sk_test_ keys enable Stripe; sk_live_ and
+ *     restricted live keys are refused (isStripeConfigured false, getStripe
+ *     throws), so no request can reach Stripe with a live key
  *
  * Exits nonzero on any failure. Uses fake placeholder keys only.
  */
 import {
+  getStripe,
   getStripePublishableKey,
+  getStripeSecretKey,
   isDepositCardFlowEnabled,
   isStripeConfigured,
 } from "../src/lib/stripe";
@@ -130,6 +135,67 @@ async function main() {
     "settlement predicate still needs only the secret",
     withEnv({ STRIPE_SECRET_KEY: SK }, () => isStripeConfigured()) === true,
   );
+
+  // --- secret key guard (server side, TEST mode only) -------------------
+  check(
+    "sk_test_ secret -> configured",
+    withEnv({ STRIPE_SECRET_KEY: SK }, () => isStripeConfigured()) === true,
+  );
+  check(
+    "sk_test_ secret with whitespace -> trimmed and accepted",
+    withEnv({ STRIPE_SECRET_KEY: `  ${SK}
+` }, () => getStripeSecretKey()) === SK,
+  );
+  check(
+    "sk_live_ secret -> NOT configured",
+    withEnv({ STRIPE_SECRET_KEY: "sk_live_fake" }, () => isStripeConfigured()) ===
+      false,
+  );
+  check(
+    "rk_live_ restricted key -> NOT configured",
+    withEnv({ STRIPE_SECRET_KEY: "rk_live_fake" }, () => isStripeConfigured()) ===
+      false,
+  );
+  check(
+    "publishable key in the secret slot -> NOT configured",
+    withEnv({ STRIPE_SECRET_KEY: PK }, () => isStripeConfigured()) === false,
+  );
+  check(
+    "sk_live_ secret + pk_test_ -> card flow disabled",
+    withEnv(
+      { STRIPE_SECRET_KEY: "sk_live_fake", STRIPE_PUBLISHABLE_KEY: PK },
+      () => isDepositCardFlowEnabled(),
+    ) === false,
+  );
+  const liveError = withEnv({ STRIPE_SECRET_KEY: "sk_live_fake" }, () => {
+    try {
+      getStripe();
+      return null;
+    } catch (err) {
+      return (err as Error).message;
+    }
+  });
+  check(
+    "getStripe() with sk_live_ throws a clear test-mode error",
+    typeof liveError === "string" && liveError.includes("sk_test_"),
+  );
+  check(
+    "getStripe() error never echoes the key",
+    typeof liveError === "string" && !liveError.includes("sk_live_fake"),
+  );
+  check(
+    "getStripe() with sk_test_ returns a client (no network)",
+    withEnv({ STRIPE_SECRET_KEY: SK }, () => Boolean(getStripe())),
+  );
+  const unsetError = withEnv({}, () => {
+    try {
+      getStripe();
+      return null;
+    } catch (err) {
+      return (err as Error).message;
+    }
+  });
+  check("getStripe() with no key still throws", typeof unsetError === "string");
 
   // --- browser loader memoization ------------------------------------------
   // loadStripe resolves null outside a browser, so nothing hits the network.

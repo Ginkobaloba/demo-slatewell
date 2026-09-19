@@ -1,30 +1,71 @@
 import Stripe from "stripe";
 
 /**
- * Lazily-constructed Stripe client. Construction is deferred so `next build`
- * and any non-payment code path do not need the secret key. Read at request
- * time from STRIPE_SECRET_KEY. Test mode only for this demo (sk_test_ key).
+ * Stripe is TEST mode only in this demo (sk_test_ / pk_test_), never a live
+ * key. The secret key is checked here, on the server, the same way
+ * getStripePublishableKey below checks the publishable key (D-013): anything
+ * that is not an sk_test_ key is refused.
+ *
+ * Refused means: isStripeConfigured() is false, so the booking flow falls
+ * back to policy-only deposit holds and settlement skips Stripe, and
+ * getStripe() throws a clear error if anything calls it anyway. No request
+ * ever reaches Stripe with a live key.
  */
-let cached: Stripe | null = null;
+const TEST_SECRET_PREFIX = "sk_test_";
 
-export function getStripe(): Stripe {
-  const key = process.env.STRIPE_SECRET_KEY;
-  if (!key) {
-    throw new Error("STRIPE_SECRET_KEY is not set");
+let warnedNonTestKey = false;
+
+/**
+ * The Stripe TEST secret key, read at request time, or null when it is unset
+ * or not an sk_test_ key. A non-test key is logged once (without the key).
+ */
+export function getStripeSecretKey(): string | null {
+  const key = (process.env.STRIPE_SECRET_KEY ?? "").trim();
+  if (!key) return null;
+  if (!key.startsWith(TEST_SECRET_PREFIX)) {
+    if (!warnedNonTestKey) {
+      warnedNonTestKey = true;
+      console.error(
+        "[stripe] STRIPE_SECRET_KEY is not a TEST key (sk_test_). Stripe is disabled; this demo never uses live keys.",
+      );
+    }
+    return null;
   }
-  if (!cached) {
-    cached = new Stripe(key);
-  }
-  return cached;
+  return key;
 }
 
 /**
- * Whether real Stripe deposit holds are active. When false, the booking flow
- * still works but deposits are tracked as policy-only holds (deposit_status
- * without a real PaymentIntent), so the demo runs without keys.
+ * Lazily-constructed Stripe client. Construction is deferred so `next build`
+ * and any non-payment code path do not need the secret key. Memoized per key
+ * so a changed key is never served by a stale client.
+ */
+let cached: { key: string; client: Stripe } | null = null;
+
+export function getStripe(): Stripe {
+  const raw = (process.env.STRIPE_SECRET_KEY ?? "").trim();
+  if (!raw) {
+    throw new Error("STRIPE_SECRET_KEY is not set");
+  }
+  const key = getStripeSecretKey();
+  if (!key) {
+    throw new Error(
+      "STRIPE_SECRET_KEY must be a Stripe TEST key (sk_test_). Live keys are refused.",
+    );
+  }
+  if (!cached || cached.key !== key) {
+    cached = { key, client: new Stripe(key) };
+  }
+  return cached.client;
+}
+
+/**
+ * Whether real Stripe deposit holds are active: a TEST secret key is set.
+ * When false, the booking flow still works but deposits are tracked as
+ * policy-only holds (deposit_status without a real PaymentIntent), so the
+ * demo runs without keys, and a live key is never used.
  */
 export function isStripeConfigured(): boolean {
-  return Boolean(process.env.STRIPE_SECRET_KEY);
+  return getStripeSecretKey() !== null;
 }
 
 /**
