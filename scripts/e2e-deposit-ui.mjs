@@ -5,7 +5,7 @@
  * posts the card to Stripe and authorizes a manual-capture hold.
  *
  * Prereqs: dev/prod server on BASE_URL (default http://localhost:3000) with
- * NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY + STRIPE_SECRET_KEY configured, seeded
+ * STRIPE_PUBLISHABLE_KEY + STRIPE_SECRET_KEY configured, seeded
  * database. Usage: node scripts/e2e-deposit-ui.mjs
  */
 import { chromium } from "playwright";

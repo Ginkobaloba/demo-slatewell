@@ -8,7 +8,7 @@ import {
   SlotTakenError,
 } from "@/lib/repo";
 import { releaseDeposit, verifyDepositIntent } from "@/lib/deposits";
-import { isStripeConfigured } from "@/lib/stripe";
+import { isDepositCardFlowEnabled } from "@/lib/stripe";
 
 export const dynamic = "force-dynamic";
 
@@ -47,11 +47,12 @@ export async function POST(req: NextRequest, props: { params: Promise<{ slug: st
     return NextResponse.json({ error: "Unknown service" }, { status: 404 });
   }
 
-  // For a deposit-bearing service with Stripe live, the card hold must
+  // For a deposit-bearing service with the card-entry flow live (secret key
+  // AND publishable key, the same predicate the wizard uses), the card hold must
   // already be authorized (Elements) and verified before we write a row.
   // The slot is then re-validated race-safely inside createBooking; if it
   // was taken in the interim, we release the hold so the card is freed.
-  const stripeLive = service.deposit_cents > 0 && isStripeConfigured();
+  const stripeLive = service.deposit_cents > 0 && isDepositCardFlowEnabled();
   let verifiedPaymentIntentId: string | null = null;
 
   if (stripeLive) {

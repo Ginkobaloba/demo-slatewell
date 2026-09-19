@@ -10,6 +10,10 @@ import {
 import type { Staff } from "@/lib/types";
 import { BookingWizard } from "@/components/booking/booking-wizard";
 import { SlatewellLogo } from "@/components/slatewell-logo";
+import {
+  getStripePublishableKey,
+  isDepositCardFlowEnabled,
+} from "@/lib/stripe";
 
 export const dynamic = "force-dynamic";
 
@@ -67,7 +71,9 @@ export default async function BookPage(props: { params: Promise<{ slug: string }
           services={services}
           staffByService={staffByService}
           weekdaysByStaff={weekdaysByStaff}
-          stripeEnabled={Boolean(process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY)}
+          stripePublishableKey={
+            isDepositCardFlowEnabled() ? getStripePublishableKey() : null
+          }
         />
       </Suspense>
     </div>

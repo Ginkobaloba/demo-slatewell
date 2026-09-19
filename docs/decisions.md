@@ -166,3 +166,33 @@ audit). 4.4b makes the card entry real:
   release-on-cancel) and `scripts/e2e-deposit-ui.mjs` (full browser card
   entry into Elements through to a Held booking with a real, non-mock
   PaymentIntent).
+
+## D-013: Stripe publishable key is delivered at runtime, not build time (2026-09-18)
+
+The deployed image never showed the card field, so deposit bookings could
+not complete. Cause: the client read `process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY`,
+which Next.js inlines only at `next build`. The Docker image is built with
+no Stripe env (keys arrive via `--env-file` at `docker run`), so the browser
+bundle kept the literal `process.env...` reference and `loadStripe` never ran.
+Meanwhile the server saw the key at runtime and routed deposit services to a
+Payment step that could not render.
+
+- **Server reads, client receives.** `getStripePublishableKey()` in
+  `src/lib/stripe.ts` reads `STRIPE_PUBLISHABLE_KEY` (falling back to
+  `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY`) at request time. The force-dynamic
+  booking page passes it to the wizard as a prop, and `getStripeClient(key)`
+  calls `loadStripe` with it (memoized per key). A publishable key is public
+  by design, so shipping it in the RSC payload is expected.
+- **No build args.** A build-arg would bake a key into the image and tie
+  every rotation to a rebuild; runtime delivery keeps the image env-free.
+- **One predicate for the whole flow.** `isDepositCardFlowEnabled()` =
+  secret key AND publishable key. It gates the wizard's Payment step, the
+  deposit-intent route, and the booking route's "hold required" check, so
+  the UI never routes to a card step it cannot render and the booking route
+  never demands a hold the UI could not collect. Settlement (cancel,
+  complete, no-show) still keys off the secret alone, since it only needs
+  to act on existing PaymentIntents.
+- **Test mode enforced.** A publishable key that is not `pk_test_` is
+  treated as absent.
+- **Verification.** `npm run test:stripe-config` covers the predicate
+  matrix, fallback order, and per-key memoization.

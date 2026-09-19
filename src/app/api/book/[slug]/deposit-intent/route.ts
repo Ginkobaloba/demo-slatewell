@@ -7,7 +7,7 @@ import {
   sameDayNotBefore,
 } from "@/lib/repo";
 import { createDepositIntent } from "@/lib/deposits";
-import { isStripeConfigured } from "@/lib/stripe";
+import { isDepositCardFlowEnabled } from "@/lib/stripe";
 
 export const dynamic = "force-dynamic";
 
@@ -29,7 +29,7 @@ const bodySchema = z.object({
  */
 export async function POST(req: NextRequest, props: { params: Promise<{ slug: string }> }) {
   const params = await props.params;
-  if (!isStripeConfigured()) {
+  if (!isDepositCardFlowEnabled()) {
     return NextResponse.json(
       { error: "Card deposits are not available right now." },
       { status: 503 },
