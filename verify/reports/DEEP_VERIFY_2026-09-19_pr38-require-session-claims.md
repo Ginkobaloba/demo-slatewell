@@ -5,8 +5,9 @@ Tested-SHA: a41b766f21baa22da6a2f0b6736663a03922ffab
 
 The claim holds on a freshly built production image and, separately, on a
 build with the Edge middleware switched off so the Node guards answer alone.
-126 of 126 harness checks passed (0 FAIL, 12 WARN, 3 INFO), plus 7 of 7
-headless browser checks, the repo's own `e2e:visitor-scope` 52 of 52 and
+126 of 126 harness checks passed (0 FAIL, 12 WARN, 3 INFO), plus 6 PASS, 1
+INFO and 0 FAIL in headless Chromium, the repo's own `e2e:visitor-scope` 52
+of 52 and
 `e2e-stripe-load-failure` 7 of 7 against the containers. The PR's own suites
 reproduced its stated counts exactly (82 and 205). A mutation check (delete
 the `requiredClaims` line, nothing else) turns both suites red, so the new
@@ -411,6 +412,12 @@ stated claim held on every surface at both layers.
 - The middleware-disabled build exists only in the scratch run directory and
   was never pushed anywhere; it is the only way to observe the Node guard in
   isolation, since the shipped middleware answers first.
+- `e2e:visitor-scope` has no `*.stripe.com` abort of its own, so it was run
+  only against `dvs38-main`, which has no Stripe variables at all, and only
+  after B-1 had established that the wizard surface on that container fires
+  zero `*.stripe.com` requests. Every browser run written for this verify
+  aborts `*.stripe.com` at the context level, and
+  `e2e-stripe-load-failure.mjs` aborts `js.stripe.com` itself.
 - `dvs38-stripe`'s `deposit-intent` 502 depends on `api.stripe.com` resolving
   to `127.0.0.1`; that is the intended pin for this run, not a production
   condition.
