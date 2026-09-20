@@ -1,5 +1,5 @@
 # .github/workflows/verify.yml
-# Last updated: 2026-06-26
+# Last updated: 2026-09-19
 #
 # BRANCH PROTECTION NOTE:
 # For the deep-verify gate to actually block merges, add "deep-verify" as a
@@ -7,6 +7,47 @@
 # (Settings > Branches > branch protection rule > "Require status checks to pass
 # before merging"). Without this, the job runs but GitHub will still allow merge
 # if it fails or is skipped.
+#
+# "Quick Verify (all PRs)" is the real PR gate: it runs npm ci, the
+# duplicate-decision-id check, typecheck, lint, the hermetic unit/integration
+# suites, and the production build -- all against the PR's own code
+# (2026-09-19). Before this, the job named "Quick Verify" only ran the ledger
+# check and the deep-verify self-test plus a curl against the LIVE deployed
+# site, so it was structurally incapable of failing because of a PR's
+# changes; a PR that broke the build or reddened every test merged green.
+# See the "Live smoke" job below for why that curl was split out.
+#
+# No seed-before-build step: `npm run build` was proven (2026-09-19, by
+# deleting data/slatewell.db and rebuilding) to succeed identically with no
+# seeded database -- every route in this app is server-rendered on demand
+# (`next build` output shows all routes as `ƒ`, none `○` reading the DB at
+# build time). This differs from demo-harborbistro, whose build does read
+# its seeded DB and whose CI mirrors its Dockerfile's seed-then-build order
+# for that reason. Slatewell's Dockerfile also seeds before building, but
+# that order exists to bake the demo dataset into the runtime image
+# (`COPY --from=builder /app/data ./data`), not because the build reads it.
+# scripts/verify-seed.ts is a real, documented integrity check for the
+# seeded database, but it has no npm script and the Dockerfile does not run
+# it either; since nothing in this CI job depends on the seeded DB, it is
+# not wired here. That gap (verify-seed.ts unwired everywhere) predates this
+# change and is out of scope for it.
+#
+# Not wired: the Playwright e2e-*.mjs scripts (e2e-admin.mjs,
+# e2e-admin-ui.mjs, e2e-booking.mjs, e2e-cancellation.mjs, e2e-deposit.mjs,
+# e2e-deposit-ui.mjs, e2e-stripe-load-failure.mjs, e2e-visitor-scope.mjs).
+# They need a real server already running on BASE_URL; wiring that is
+# separate, larger work (standing up a per-PR preview deploy or an
+# in-workflow `next start` + readiness wait), not this port. Slatewell also
+# has no post-build server-suite equivalent to demo-harborbistro's
+# vitest.server.config.ts / test:server -- there is no hermetic in-process
+# suite that exercises the built standalone server here.
+#
+# "Live smoke (deployed site)" is NOT a gate on this PR. It curls
+# verify/smoke.yml's deploy_url, i.e. whatever is already running in
+# production, and says nothing about the code in this PR or this branch.
+# Never make it a required status check on that basis; if you want a real
+# preview-environment smoke test, that is separate, larger work (standing
+# up a per-PR preview deploy), not this job.
 #
 # WINDOWS / HEADED NOTE:
 # The headed layer (Layer 5, Windows MCP / computer-use) and adversarial generation
@@ -29,11 +70,70 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          registry-url: https://npm.pkg.github.com
+          scope: '@paradigm-codes'
+
+      # NODE_AUTH_TOKEN is read by the .npmrc actions/setup-node just wrote
+      # to the user config (registry-url + scope above); npm interpolates it
+      # itself. The token is never echoed, never written by a step of ours,
+      # and never appears on a command line.
+      - name: Install dependencies (npm ci)
+        run: npm ci
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.PACKAGES_TOKEN }}
+
       - name: Check ledger
         run: npm run ledger:check
 
+      - name: Check docs/decisions.md for duplicate decision ids
+        run: node scripts/check-decisions.mjs
+
+      - name: Typecheck
+        run: npx tsc --noEmit --extendedDiagnostics
+
+      - name: Lint
+        run: npm run lint
+
+      # No aggregate "npm test" exists in this repo (no vitest). Each of
+      # these is its own hermetic tsx/node script; test-cancellation.ts and
+      # test-scheduling.ts are hermetic but have no package.json entry, so
+      # they run directly via npx tsx. None of these touch data/slatewell.db
+      # or the network (test-deposits.ts and test-stripe-config.ts skip
+      # their live-Stripe assertions when no STRIPE_SECRET_KEY is set,
+      # test-admin-security.ts/test-admin-session.ts log an expected
+      # "SESSION_SECRET is not set" warning and still pass).
+      - name: Hermetic test suites
+        run: |
+          npm run test:admin-queries
+          npm run test:admin-security
+          npm run test:admin-session
+          npm run test:deposits
+          npm run test:portal-handoff
+          npm run test:portal-token
+          npm run test:retention
+          npm run test:stripe-config
+          npm run test:ledger
+          npm run test:decisions
+          npx tsx scripts/test-cancellation.ts
+          npx tsx scripts/test-scheduling.ts
+
+      - name: Build
+        run: npm run build
+
       - name: Test the deep-verify gate (offline)
         run: bash verify/ci/test_deep_gate.sh
+
+  live-smoke:
+    name: Live smoke (deployed site)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
 
       - name: Install yq
         run: |
@@ -41,7 +141,9 @@ jobs:
             https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
           sudo chmod +x /usr/local/bin/yq
 
-      - name: Run quick smoke against verify/smoke.yml
+      # This hits verify/smoke.yml's deploy_url -- the LIVE deployed site,
+      # not this PR's code. It cannot fail because of anything in this PR.
+      - name: Run smoke against verify/smoke.yml (production, not this PR)
         run: bash verify/ci/quick_smoke.sh verify/smoke.yml
 
   deep-verify:
