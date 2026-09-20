@@ -9,6 +9,16 @@
 # reports the URL it ended on, so the assertion is checkable here, and it has
 # to be: it used to fall through to the skip branch below, which meant every
 # redirect assertion in verify/smoke.yml silently proved nothing.
+#
+# A surface that redirects but declares no redirects_to assertion is a
+# structural gap, not a passing surface: curl -L quietly follows the
+# redirect, and every text_present/header_present assertion below would then
+# run against the page it landed on instead of the page the surface names.
+# That is invisible from reading the config, and it stays green right up
+# until the day a surface that used to be direct starts redirecting. Guard
+# it here: if the landed URL differs from the requested one and this surface
+# declares no redirects_to assertion, fail before any other assertion runs,
+# so nothing downstream can pass against the wrong page.
 set -uo pipefail
 
 SMOKE="${1:-verify/smoke.yml}"
@@ -39,6 +49,13 @@ for i in $(seq 0 $((count-1))); do
   code="${probe%% *}"
   landed="${probe#* }"
   acount="$(yq -r ".surfaces[$i].assertions | length" "$SMOKE")"
+  if yq -r ".surfaces[$i].assertions[].type" "$SMOKE" | grep -qx redirects_to; then redirect_declared=1; else redirect_declared=0; fi
+  if [ "$redirect_declared" = "0" ] && [ "$landed" != "$full" ]; then
+    echo "  FAIL undeclared redirect: requested $full, landed on $landed. Declare a redirects_to assertion for this surface's expected destination, or point its url at $landed directly."
+    fail=1
+    rm -f "$hdr" "$bdy"
+    continue
+  fi
   for j in $(seq 0 $((acount-1))); do
     atype="$(yq -r ".surfaces[$i].assertions[$j].type" "$SMOKE")"
     case "$atype" in
@@ -54,7 +71,7 @@ for i in $(seq 0 $((count-1))); do
       redirects_to)
         exp="$(yq -r ".surfaces[$i].assertions[$j].expect" "$SMOKE")"
         # Accept either convention in use across the demo repos: a fully
-        # qualified URL (this repo) or a bare path, resolved against deploy_url.
+        # qualified URL or a bare path, resolved against deploy_url.
         case "$exp" in /*) exp="${deploy_url}${exp}";; esac
         if [ "$landed" = "$exp" ]; then echo "  ok redirects_to $exp"; else echo "  FAIL redirects_to expected $exp got $landed"; fail=1; fi;;
       *) echo "  skip $atype (browser-layer, covered in deep verify)";;
