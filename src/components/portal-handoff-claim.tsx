@@ -3,6 +3,13 @@
 import { useEffect, useState } from "react";
 
 /**
+ * UNREACHED in production as of 2026-09-19: the portal renders this demo
+ * as an iframe tile, and iframe tiles receive no token today, so this
+ * component's `#portal_token=` check never fires on a portal-launched
+ * visit. The portal side owns this decision and records it in
+ * `docs/PORTAL_GATE_CONTRACT.md` (portal-shell); check there before
+ * assuming this component is live.
+ *
  * Portal handoff claim (chunk 4b, client component).
  *
  * Mounted invisibly on the Slatewell landing page. On mount it inspects

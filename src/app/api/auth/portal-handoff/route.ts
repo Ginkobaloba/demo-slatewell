@@ -9,6 +9,12 @@ import {
 import { resolveVisitorId, setVisitorCookie } from "@/lib/visitor";
 
 /**
+ * UNREACHED in production as of 2026-09-19: the portal renders this demo
+ * as an iframe tile, and iframe tiles receive no token today (the portal
+ * never navigates the frame with a #portal_token fragment). The portal
+ * side owns this decision and records it in `docs/PORTAL_GATE_CONTRACT.md`
+ * (portal-shell); check there before assuming this route is live.
+ *
  * Portal handoff endpoint (chunk 4b).
  *
  * The Portal mints a 60-minute RS256 JWT and redirects the browser to
