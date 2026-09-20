@@ -38,19 +38,35 @@ export const VISITOR_TTL_SECONDS = 60 * 60 * 24;
 
 const MIN_SECRET_LENGTH = 32;
 /**
- * The RETIRED `.env.example` placeholder ("replace-with-a-real-32-plus-char-
- * random-secret", 46 chars), denylisted by exact string as defense in depth
- * only, for anyone who deployed an older checkout. This was never the
- * primary guard and must not become one: an exact-string denylist is
- * defeated by editing a single character of the placeholder, which is
- * exactly what a person does when told a value is invalid -- e.g. this
- * value plus one trailing character is 47 chars, clears MIN_SECRET_LENGTH,
- * and is NOT in this set, so it would have signed real sessions. The
- * current `.env.example` placeholder is instead kept well under
- * MIN_SECRET_LENGTH so it fails the length rule structurally. Do not add
- * the current placeholder here; keep future placeholders short instead.
+ * NOT a denylist. A denylist tries to enumerate bad input and is trivially
+ * defeated by editing one character, which is exactly what a person does
+ * when told a value is invalid -- that is why session-secret.ts in the
+ * sibling demo-harborbistro repo has none, and why this file does not add
+ * one for anything the length floor already catches on its own.
+ *
+ * This is a retirement/revocation list for ONE specific value this repo
+ * PUBLISHED: the retired `.env.example` placeholder
+ * ("replace-with-a-real-32-plus-char-random-secret", 46 chars). It exists
+ * only because that string is 46 characters, which PASSES MIN_SECRET_LENGTH
+ * (32) on its own -- the one case where the length floor cannot refuse a
+ * retired placeholder unaided, so this list is the only thing standing
+ * between that specific, previously-public string and a signed session.
+ * (This value plus one trailing character is 47 chars, clears
+ * MIN_SECRET_LENGTH, and is deliberately NOT in this set -- appending a
+ * character defeats an entry here exactly as it would a denylist. That is
+ * fine: the entry's job is to catch the one value we already published
+ * byte for byte, not to catch every string derived from it.)
+ *
+ * The structural fix is forward-looking, not retroactive: every placeholder
+ * chosen AFTER this one is kept under MIN_SECRET_LENGTH so the length floor
+ * refuses it outright and no entry is ever needed for it. The current
+ * `.env.example` placeholder ("REPLACE-BEFORE-DEPLOY", 21 chars) already
+ * follows that rule. Do not add the current placeholder, or any future one,
+ * to this list -- if a placeholder is ever long enough to need one, the fix
+ * is to shorten the placeholder, not to grow this list. There is exactly
+ * one entry here and there should never be a second.
  */
-const PLACEHOLDER_SECRETS = new Set([
+const RETIRED_PUBLISHED_SECRETS = new Set([
   "replace-with-a-real-32-plus-char-random-secret",
 ]);
 
@@ -113,8 +129,12 @@ export function sessionSecretProblem(
     return "contains_path";
   }
   if (/\s/.test(raw)) return "contains_whitespace";
+  // Length floor runs BEFORE the revocation-list check on purpose: this is a
+  // post-floor check for the one retired value that is long enough to clear
+  // the floor unaided (see RETIRED_PUBLISHED_SECRETS above), not a
+  // general-purpose denylist that the floor happens to sit behind.
   if (raw.length < MIN_SECRET_LENGTH) return "too_short";
-  if (PLACEHOLDER_SECRETS.has(raw)) return "placeholder";
+  if (RETIRED_PUBLISHED_SECRETS.has(raw)) return "placeholder";
   return null;
 }
 
