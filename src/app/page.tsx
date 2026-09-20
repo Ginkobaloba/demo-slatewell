@@ -12,6 +12,11 @@ import {
 } from "lucide-react";
 import { SlatewellLogo, SlatewellMark } from "@/components/slatewell-logo";
 
+// Deliberate defect for CI break-test: invalid Next.js route segment config
+// value. Next validates this at build time; it is not a plain TS type error
+// tsc catches on a fresh checkout (no .next/types yet).
+export const dynamic = "bogus";
+
 /**
  * Slatewell marketing landing. Server-rendered, no client libraries.
  * Structure follows the AxlePoint and Lumen demo pattern (hero + stats +
