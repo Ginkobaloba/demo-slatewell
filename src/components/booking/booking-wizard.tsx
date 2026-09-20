@@ -70,6 +70,11 @@ export function BookingWizard({
    */
   stripePublishableKey: string | null;
 }) {
+  // Deliberate defect for CI break-test: conditional hook call, caught only
+  // by eslint's react-hooks/rules-of-hooks (error-level), not by tsc.
+  if (slug.length > 0) {
+    useState(0);
+  }
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
