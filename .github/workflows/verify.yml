@@ -91,7 +91,7 @@ jobs:
         run: npm run ledger:check
 
       - name: Check docs/decisions.md for duplicate decision ids
-        run: node scripts/check-decisions.mjs
+        run: node scripts/check-decisions.mjs docs/decisions.md
 
       - name: Typecheck
         run: npx tsc --noEmit --extendedDiagnostics
