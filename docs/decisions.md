@@ -2,11 +2,6 @@
 
 Numbered log of design and architecture decisions. Append, don't rewrite.
 
-## D-001: duplicate id, deliberate defect for CI break-test (2026-09-20)
-
-This heading intentionally reuses D-001 to prove scripts/check-decisions.mjs
-fails the build on a real collision.
-
 ## D-001: Tailwind v4, not v3 (2026-06-10)
 
 The shadcn CLI (v4.11) emits Tailwind v4-style components (base-ui
