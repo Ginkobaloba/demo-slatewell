@@ -7,10 +7,6 @@ import type { BookingStatus, DepositStatus } from "@/lib/types";
 
 export type DepositOutcome = "Released" | "Captured" | null;
 
-// Deliberate defect for CI break-test: type error, wrong number of args to
-// a typed function, caught only by tsc (not by lint or any runtime test).
-const __breaktestTypeError: number = ("not a number" as unknown as string).length + {};
-
 export interface CancellationDecision {
   allowed: boolean;
   reason: "ok" | "already-cancelled" | "not-cancellable" | "in-past";
