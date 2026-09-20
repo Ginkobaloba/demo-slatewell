@@ -23,5 +23,6 @@
   recorded in the PR description. The route and component remain fully
   implemented and unit-tested but unreached from production traffic, same
   as before this change.
-- **Refs:** D-020 (docs/decisions.md); branch
-  `docs/portal-gate-contract-note`; portal-shell `docs/PORTAL_GATE_CONTRACT.md`
+- **Refs:** D-020 (docs/decisions.md); PR #42
+  (demo-slatewell); branch `docs/portal-gate-contract-note`; portal-shell
+  `docs/PORTAL_GATE_CONTRACT.md`
