@@ -20,8 +20,7 @@ const basic = computeStaffSlots(
   { durationMin: 60, bufferBeforeMin: 0, bufferAfterMin: 0 },
   { staffId: 1, blocks: [{ startMin: 540, endMin: 720 }], busy: [], isOff: false }
 );
-// Deliberate defect for CI break-test: wrong expected value.
-check("basic block yields 15-min grid", basic.length === 999, basic);
+check("basic block yields 15-min grid", basic.length === 9, basic);
 check("first slot at block start", basic[0] === 540, basic);
 check("last slot leaves room for duration", basic[basic.length - 1] === 660, basic);
 
