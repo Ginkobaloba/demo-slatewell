@@ -37,7 +37,19 @@ export const SESSION_TTL_SECONDS = 60 * 60 * 8;
 export const VISITOR_TTL_SECONDS = 60 * 60 * 24;
 
 const MIN_SECRET_LENGTH = 32;
-/** The .env.example placeholder is public, so it must never sign anything. */
+/**
+ * The RETIRED `.env.example` placeholder ("replace-with-a-real-32-plus-char-
+ * random-secret", 46 chars), denylisted by exact string as defense in depth
+ * only, for anyone who deployed an older checkout. This was never the
+ * primary guard and must not become one: an exact-string denylist is
+ * defeated by editing a single character of the placeholder, which is
+ * exactly what a person does when told a value is invalid -- e.g. this
+ * value plus one trailing character is 47 chars, clears MIN_SECRET_LENGTH,
+ * and is NOT in this set, so it would have signed real sessions. The
+ * current `.env.example` placeholder is instead kept well under
+ * MIN_SECRET_LENGTH so it fails the length rule structurally. Do not add
+ * the current placeholder here; keep future placeholders short instead.
+ */
 const PLACEHOLDER_SECRETS = new Set([
   "replace-with-a-real-32-plus-char-random-secret",
 ]);
