@@ -21,7 +21,7 @@
 surface: admin-unauthenticated
 url: /admin
 assertions:
-  - { type: redirects_to, expect: "https://slatewell.projectnexuscode.org/?admin=required" }
+  - { type: redirects_to, expect: "https://slatewell.paradigm.codes/?admin=required" }
   # After redirect, the page must render the "sign in required" inline notice
   - { type: text_present, text: "Sign in as demo admin to access the dashboard." }
   - { type: http_status, expect: 200 }  # final page after redirect is 200

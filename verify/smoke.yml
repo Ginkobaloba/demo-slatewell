@@ -9,7 +9,7 @@
 #   json_path_equals  -- checks that a JSONPath expression equals `expect`
 
 target: demo-slatewell
-deploy_url: https://slatewell.projectnexuscode.org
+deploy_url: https://slatewell.paradigm.codes
 
 surfaces:
   - name: home

@@ -9,7 +9,7 @@
  */
 import { chromium } from "playwright";
 
-const BASE_URL = process.argv[2] ?? "https://slatewell.projectnexuscode.org";
+const BASE_URL = process.argv[2] ?? "https://slatewell.paradigm.codes";
 const SLUG = "wave-wellness";
 
 let failures = 0;
@@ -82,7 +82,7 @@ check("prod: ICS 200 + text/calendar", icsRes.status === 200 && (icsRes.headers.
 check("prod: ICS has TZID DTSTART", icsText.includes("DTSTART;TZID=America/New_York:"));
 check(
   "prod: ICS cancel URL uses https public origin",
-  icsText.includes("https://slatewell.projectnexuscode.org/book/"),
+  icsText.includes(`${new URL(BASE_URL).origin}/book/`),
   icsText.split("\r\n").find((l) => l.includes("Cancel"))
 );
 
