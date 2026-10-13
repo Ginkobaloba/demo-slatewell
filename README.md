@@ -28,7 +28,7 @@ communications log.
 
 ## Stack
 
-- Next.js 14 (App Router) + TypeScript
+- Next.js 15.5 (App Router) + TypeScript
 - Tailwind CSS v4 + shadcn/ui
 - SQLite via better-sqlite3, seeded with deterministic mock data
 
