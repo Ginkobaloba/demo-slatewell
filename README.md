@@ -98,3 +98,7 @@ The workflow at `.github/workflows/verify.yml` runs:
 
 Headed-browser (Layer 5, Windows MCP) and adversarial (Layer 6) steps cannot
 run in CI -- they require a local Windows desktop run before merging tier-3 PRs.
+
+## License
+
+MIT, see [LICENSE](LICENSE). The Geist fonts in `src/app/fonts/` are not covered by it: they are third-party files under the SIL Open Font License 1.1, see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
