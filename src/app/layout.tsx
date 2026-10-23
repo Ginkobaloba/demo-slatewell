@@ -15,7 +15,7 @@ const geistMono = localFont({
   weight: "100 900",
 });
 
-const SITE_URL = "https://slatewell.projectnexuscode.org";
+const SITE_URL = "https://slatewell.paradigm.codes";
 const SITE_DESCRIPTION =
   "Multi-staff scheduling for service businesses. Real availability, real deposits, and real cancellation policy without enterprise overhead.";
 

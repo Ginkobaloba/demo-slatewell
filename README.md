@@ -10,7 +10,7 @@ industry-specific, and the enterprise suites are too heavy. Slatewell
 sits in the middle for businesses that need multi-staff scheduling
 without the overhead.
 
-**Live demo:** https://slatewell.projectnexuscode.org (pending deploy)
+**Live demo:** https://slatewell.paradigm.codes (moved from slatewell.projectnexuscode.org, which redirects until that domain lapses)
 
 ## What the demo shows
 
